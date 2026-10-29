@@ -1,0 +1,2 @@
+/sys/fs/cgroup/user.slice/user-5569819.slice/cpu.max: 600000 100000
+/sys/fs/cgroup/user.slice/user-5569819.slice/memory.max: 34359738368

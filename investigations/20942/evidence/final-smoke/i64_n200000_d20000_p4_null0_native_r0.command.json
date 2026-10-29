@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "investigations/20942/evidence/final-smoke/i64_n200000_d20000_p4_null0_native_r0.time.txt",
+    "taskset",
+    "-c",
+    "0-5",
+    "/tmp/infralab-datafusion/target/release/infralab-distinct-probe",
+    "--rows",
+    "200000",
+    "--cardinality",
+    "20000",
+    "--partitions",
+    "4",
+    "--kind",
+    "i64",
+    "--mode",
+    "native",
+    "--null-every",
+    "0",
+    "--iterations",
+    "2"
+  ],
+  "started_utc": "2026-10-29T19:27:02Z",
+  "exit_code": 0,
+  "process_wall_s": 0.0259620190190617
+}

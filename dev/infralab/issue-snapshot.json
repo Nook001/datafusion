@@ -1,0 +1,72 @@
+{
+  "checked_at": "2026-10-29",
+  "repository": "apache/datafusion",
+  "candidates": [
+    {
+      "issue": 22189,
+      "status": "open",
+      "assigned": "xudong963",
+      "related_prs": [
+        {
+          "number": 22406,
+          "status": "merged"
+        },
+        {
+          "number": 22353,
+          "status": "closed, not merged"
+        }
+      ],
+      "review_offer": "https://github.com/apache/datafusion/issues/22189#issuecomment-6504244269"
+    },
+    {
+      "issue": 21554,
+      "status": "open",
+      "related_prs": [
+        {
+          "number": 21566,
+          "status": "closed, not merged"
+        },
+        {
+          "number": 26438,
+          "status": "closed, not merged"
+        },
+        {
+          "number": 24323,
+          "status": "merged"
+        }
+      ]
+    },
+    {
+      "issue": 24710,
+      "status": "open",
+      "related_prs": [
+        {
+          "number": 25044,
+          "status": "open"
+        }
+      ],
+      "contribution": "Independent validation or review of existing PR"
+    }
+  ],
+  "deprioritized": [
+    {
+      "issue": 26891,
+      "reason": "Open PR 26894"
+    },
+    {
+      "issue": 26696,
+      "reason": "Open PR 26703 and related Arrow work"
+    },
+    {
+      "issue": 24280,
+      "reason": "Existing draft; reported negligible end-to-end benefit"
+    }
+  ],
+  "searches": [
+    "repo:apache/datafusion is:issue is:open label:performance no:assignee",
+    "repo:apache/datafusion is:issue is:open memory no:assignee",
+    "repo:apache/datafusion is:open \"pruning setup\" in:title",
+    "repo:apache/datafusion is:open \"parquet\" \"metrics\" in:title"
+  ],
+  "limitations": "GitHub connector search briefly returned a secondary rate limit; full issue comments and known PR metadata were retrieved, and public issue pages were cross-checked. Search results cannot prove absence of all parallel work."
+}

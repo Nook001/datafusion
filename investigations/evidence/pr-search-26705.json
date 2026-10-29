@@ -1,0 +1,26 @@
+{
+  "retrieved_at": "2026-10-29T19:04:59.542Z",
+  "query": "repo:apache/datafusion 26705",
+  "result": {
+    "issues": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/26728",
+        "title": "test: catch operators that hold input-sized memory without reserving it",
+        "issue_number": 26728,
+        "body": "## Which issue does this PR close?\n\n- Part of #25650.\n\n## Rationale for this change\n\nDataFusion limits only the memory that operators reserve in the `MemoryPool`. When an operator holds memory without reserving it, the pool thinks there is room, nothing spills, and the process can run out of memory even with a memory limit set. No test catches this today: `memory_limit_validation` compares RSS with hand-picked bounds for sort and two joins, and the drift logging in sqllogictest (#25651) never fails a test.\n\nNot all unreserved memory is a bug. The `MemoryPool` docs let batches that are passing between operators go unreserved, which is why #22626, which compared allocations with reservations directly, was reverted (#22723). What the docs do require is that memory which grows with the input is reserved.\n\nThis PR tests that rule. `memory_limit_validation` already runs every query twice, on 10% of the data and on all of it. Batches in flight are the same size in both runs. So if unreserved memory (bytes allocated minus bytes reserved) grows between the two runs, some operator is holding memory in proportion to its input without reserving it.\n\n## What changes are included in this PR?\n\nThis PR builds on #26694, which gives `memory_limit_validation` its own test binary, so the counting allocator below affects only these tests. The first two commits are from #26694; please review the last two.\n\n**1. Share sqllogictest's counting allocator.** It moves from `datafusion-sqllogictest` to `test-utils` unchanged, so both suites use one copy. sqllogictest behaves as before: the runner now passes the allocated-bytes function to `enable_memory_drift_logging`, and `datafusion-sqllogictest` no longer exports `CountingAllocator` and `flush_thread_allocations`. The allocator keeps counting per thread, because one shared counter made a full sqllogictest run about 40% slower on a 12-core laptop.\n\n**2. The check.** Every case now also fails if unreserved memory, at its peak, grows by 16 MB or more from the 10% run to the full run. The existing RSS bounds stay. Queries are drained batch by batch instead of collected, so the test no longer counts its own copy of the output.\n\nNew cases run on 10M rows with an integer column `v` and a short string column `s`. They use 4 threads, because some of these problems only show up when inputs run ahead on other threads.\n\n| Query | Growth of unreserved memory on `main` | Status |\n|---|---|---|\n| `ORDER BY s DESC LIMIT 10` | < 1 MB | passes |\n| `GROUP BY v % 10` | < 1 MB | passes |\n| hash join, `Partitioned` and `CollectLeft` | < 1 MB | passes |\n| `ORDER BY s DESC` | 150–300 MB | ignored, #26411 |\n| `median(v)` | 120–140 MB | ignored, #26705 |\n| `array_agg(s) ... GROUP BY v % 10` | 450–590 MB | ignored, #26705 |\n| the same on one partition | ~380 MB | ignored, #26701 |\n| `SELECT DISTINCT s` | ~320 MB | ignored, #25606 |\n| `sum(v) OVER ()` | 205–230 MB | ignored, #26707 |\n\nThe existing sort, sort-merge join and nested loop join cases pass the new check, with growth of 3 MB or less.\n\nWhen one of these issues is fixed, removing its `#[ignore]` turns the case into a regression test. A failure looks like this:\n\n```\nUnreserved memory grew with the input by 120.2 MB, more than 16.0 MB. Memory proportional to the input must be reserved, see the `MemoryPool` docs\n```\n\n## What is the testing strategy for this PR?\n\n- `cargo test --profile ci -p datafusion --test memory_limit_validation --features extended_tests`: 35 passed, 7 ignored.\n- Each ignored case fails on the new check when run on its own, and its RSS stays within its bound. To run one:\n  ```\n  DATAFUSION_TEST_MEM_LIMIT_VALIDATION=1 cargo test --profile ci -p datafusion --test memory_limit_validation --features extended_tests -- aggregate_mem_validation::median --exact --include-ignored --nocapture\n  ```\n- A full sqllogictest run passes and still prints its peak drift line.\n- `cargo publish --workspace --dry-run` passes with the new path-only dev-dependency on `test-utils`, as it does for `datafusion`.\n\n## Are there any user-facing changes?\n\nNo, these are test changes. `datafusion-sqllogictest` no longer exports `CountingAllocator` and `flush_thread_allocations`, which were added after the last release.\n",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/26728",
+        "display_title": "test: catch operators that hold input-sized memory without reserving it"
+      }
+    ]
+  }
+}

@@ -1,0 +1,132 @@
+   Compiling serde_core v1.0.229
+   Compiling tokio v1.54.1
+   Compiling serde v1.0.229
+   Compiling arrow-buffer v60.0.0
+   Compiling rustls v0.23.46
+   Compiling rustls-webpki v0.103.16
+   Compiling aho-corasick v1.1.4
+   Compiling nix v0.31.3
+   Compiling url v2.5.8
+   Compiling ring v0.17.14
+   Compiling getrandom v0.2.17
+   Compiling regex-automata v0.4.16
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling vsimd v0.8.0
+   Compiling num-conv v0.2.1
+   Compiling time-core v0.1.8
+   Compiling outref v0.5.2
+   Compiling base64-simd v0.8.0
+   Compiling bytes-utils v0.1.4
+   Compiling serde_json v1.0.154
+   Compiling csv v1.4.0
+   Compiling time v0.3.47
+   Compiling chrono v0.4.45
+   Compiling regex v1.13.1
+   Compiling arrow-schema v60.0.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling quick-xml v0.41.0
+   Compiling chrono-tz v0.10.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling arrow-data v60.0.0
+   Compiling aws-smithy-types v1.9.0
+   Compiling tokio-util v0.7.20
+   Compiling tokio-rustls v0.26.4
+   Compiling h2 v0.4.16
+   Compiling tower v0.5.3
+   Compiling aws-smithy-async v1.3.1
+   Compiling aws-smithy-runtime-api-macros v1.1.0
+   Compiling datafusion-common-runtime v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common-runtime)
+   Compiling async-compression v0.4.51
+   Compiling tower-http v0.6.8
+   Compiling aws-types v1.7.0
+   Compiling aws-smithy-runtime-api v1.19.1
+   Compiling rustversion v1.0.22
+   Compiling hmac v0.13.0
+   Compiling xmlparser v0.13.6
+   Compiling regex-lite v0.1.9
+   Compiling tokio-stream v0.1.19
+   Compiling libmimalloc-sys v0.1.49
+   Compiling urlencoding v2.1.3
+   Compiling nibble_vec v0.1.0
+   Compiling arc-swap v1.9.1
+   Compiling cpufeatures v0.2.17
+   Compiling option-ext v0.2.0
+   Compiling endian-type v0.2.0
+   Compiling aws-smithy-schema v1.1.0
+   Compiling aws-credential-types v1.3.1
+   Compiling aws-smithy-http v0.64.2
+   Compiling aws-smithy-observability v0.3.0
+   Compiling aws-sigv4 v1.6.3
+   Compiling radix_trie v0.3.0
+   Compiling dirs-sys v0.5.0
+   Compiling clap_builder v4.6.7
+   Compiling sha1 v0.10.6
+   Compiling env_filter v2.0.0
+   Compiling hyper v1.9.0
+   Compiling aws-smithy-json v0.65.0
+   Compiling aws-smithy-xml v0.64.0
+   Compiling home v0.5.12
+   Compiling arrow-array v60.0.0
+   Compiling rustyline v19.0.0
+   Compiling env_logger v0.11.11
+   Compiling hyper-util v0.1.20
+   Compiling aws-smithy-query v0.64.0
+   Compiling mimalloc v0.1.52
+   Compiling dirs v7.0.0
+   Compiling clap v4.6.7
+   Compiling hyper-rustls v0.27.9
+   Compiling reqwest v0.13.5
+   Compiling aws-smithy-http-client v1.5.1
+   Compiling arrow-cmp v60.0.0
+   Compiling arrow-row v60.0.0
+   Compiling arrow-arith v60.0.0
+   Compiling arrow-avro v60.0.0
+   Compiling arrow-select v60.0.0
+   Compiling object_store v0.14.2
+   Compiling aws-smithy-runtime v1.16.1
+   Compiling arrow-ord v60.0.0
+   Compiling arrow-ipc v60.0.0
+   Compiling arrow-string v60.0.0
+   Compiling arrow-cast v60.0.0
+   Compiling aws-runtime v1.10.2
+   Compiling aws-sdk-ssooidc v1.119.0
+   Compiling aws-sdk-sts v1.122.0
+   Compiling aws-sdk-sso v1.117.0
+   Compiling arrow-json v60.0.0
+   Compiling arrow-csv v60.0.0
+   Compiling arrow v60.0.0
+   Compiling parquet v60.0.0
+   Compiling aws-config v1.13.0
+   Compiling datafusion-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common)
+   Compiling datafusion-expr-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/expr-common)
+   Compiling datafusion-physical-expr-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr-common)
+   Compiling datafusion-functions-window-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-window-common)
+   Compiling datafusion-functions-aggregate-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-aggregate-common)
+   Compiling datafusion-expr v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/expr)
+   Compiling datafusion-physical-expr v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr)
+   Compiling datafusion-execution v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/execution)
+   Compiling datafusion-functions v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions)
+   Compiling datafusion-functions-aggregate v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-aggregate)
+   Compiling datafusion-functions-window v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-window)
+   Compiling datafusion-optimizer v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/optimizer)
+   Compiling datafusion-physical-plan v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-plan)
+   Compiling datafusion-physical-expr-adapter v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr-adapter)
+   Compiling datafusion-functions-nested v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-nested)
+   Compiling datafusion-sql v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/sql)
+   Compiling datafusion-session v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/session)
+   Compiling datafusion-datasource v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource)
+   Compiling datafusion-catalog v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/catalog)
+   Compiling datafusion-pruning v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/pruning)
+   Compiling datafusion-datasource-json v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-json)
+   Compiling datafusion-datasource-avro v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-avro)
+   Compiling datafusion-datasource-csv v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-csv)
+   Compiling datafusion-datasource-arrow v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-arrow)
+   Compiling datafusion-datasource-parquet v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-parquet)
+   Compiling datafusion-physical-optimizer v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-optimizer)
+   Compiling datafusion-functions-table v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-table)
+   Compiling datafusion-catalog-listing v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/catalog-listing)
+   Compiling datafusion v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/core)
+   Compiling datafusion-spark v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/spark)
+   Compiling datafusion-cli v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion-cli)
+    Finished `ci` profile [unoptimized] target(s) in 50.54s

@@ -1,0 +1,2 @@
+[ perf record: Woken up 57 times to write data ]
+[ perf record: Captured and wrote 15.271 MB investigations/20942/evidence/profiles/split.perf.data (1897 samples) ]

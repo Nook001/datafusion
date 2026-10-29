@@ -1,0 +1,62 @@
+{
+  "retrieved_at": "2026-10-29T19:04:21.653Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/6916",
+    "title": "Tweak optimal default batch size",
+    "issue_number": 6916,
+    "body": "### Is your feature request related to a problem or challenge?\n\nA small test to double the batch size (from 8192 to  16384) shows some performance improvements (~10%) on some queries: \r\n```\r\nComparing main and batch_size\r\n--------------------\r\nBenchmark tpch_mem.json\r\n--------------------\r\n┏━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\r\n┃ Query        ┃     main ┃ batch_size ┃        Change ┃\r\n┡━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\r\n│ QQuery 1     │ 190.81ms │   186.92ms │     no change │\r\n│ QQuery 2     │  59.14ms │    55.43ms │ +1.07x faster │\r\n│ QQuery 3     │  47.03ms │    44.95ms │     no change │\r\n│ QQuery 4     │  37.16ms │    33.60ms │ +1.11x faster │\r\n│ QQuery 5     │  95.66ms │    86.47ms │ +1.11x faster │\r\n│ QQuery 6     │  10.47ms │     8.93ms │ +1.17x faster │\r\n│ QQuery 7     │ 196.26ms │   192.92ms │     no change │\r\n│ QQuery 8     │  69.94ms │    63.64ms │ +1.10x faster │\r\n│ QQuery 9     │ 136.17ms │   129.56ms │     no change │\r\n│ QQuery 10    │  99.69ms │    97.21ms │     no change │\r\n│ QQuery 11    │  45.22ms │    45.94ms │     no change │\r\n│ QQuery 12    │  67.66ms │    65.41ms │     no change │\r\n│ QQuery 13    │ 182.43ms │   156.67ms │ +1.16x faster │\r\n│ QQuery 14    │  12.36ms │    11.16ms │ +1.11x faster │\r\n│ QQuery 15    │  23.18ms │    20.79ms │ +1.11x faster │\r\n│ QQuery 16    │  48.14ms │    47.22ms │     no change │\r\n│ QQuery 17    │ 681.34ms │   682.63ms │     no change │\r\n│ QQuery 18    │ 516.47ms │   490.86ms │     no change │\r\n│ QQuery 19    │  58.40ms │    56.68ms │     no change │\r\n│ QQuery 20    │ 193.13ms │   202.12ms │     no change │\r\n│ QQuery 21    │ 261.12ms │   242.51ms │ +1.08x faster │\r\n│ QQuery 22    │  27.81ms │    28.08ms │     no change │\r\n└──────────────┴──────────┴────────────┴───────────────┘\r\n```\r\n\r\nThis is nice for such a small change and aligns with https://github.com/apache/arrow-datafusion/issues/6287\n\n### Describe the solution you'd like\n\nConfigure a (more) optimal default\n\n### Describe alternatives you've considered\n\n_No response_\n\n### Additional context\n\n_No response_",
+    "state": "open",
+    "user": {
+      "login": "Dandandan",
+      "name": "Dandandan",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+      "id": 163737
+    },
+    "assignees": null,
+    "labels": [
+      {
+        "name": "enhancement",
+        "color": "a2eeef",
+        "description": "New feature or request"
+      },
+      {
+        "name": "performance",
+        "color": "EA11B6",
+        "description": "Make DataFusion faster"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 1,
+    "created_at": "2023-07-11T14:44:06Z",
+    "updated_at": "2023-07-25T20:43:29Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/6916",
+    "display_title": "Tweak optimal default batch size"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/6916#issuecomment-1650533989",
+      "body": "That's a great point\r\nThe threshold of `CoalesceBatches` might be a related place for tuning:\r\nhttps://github.com/apache/arrow-datafusion/blob/52cf58b46133d448e067455baab0faf8a50e565a/datafusion/core/src/physical_plan/coalesce_batches.rs#L230\r\nThe current implementation I think will trigger coalesce when the input batch is < default batch size\r\nFor example, if two consecutive inputs of `CoalesceBatchesExec` have batch size 8000 (default 8192), then they will be concatenated, introducing unnecessary memcpy\r\nThis will happen if the query has some high selectivity predicates (e.g. TPCH Q1), I experimented setting the coalescing threshold to `target_batch_size` * 0.8, Q1 can run ~20% faster\r\n",
+      "user": {
+        "login": "2010YOUY01",
+        "name": "2010YOUY01",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/23360377?v=4",
+        "id": 23360377
+      },
+      "id": 1650533989,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">That's a great point<br>\nThe threshold of <code class=\"notranslate\">CoalesceBatches</code> might be a related place for tuning:<br>\n<a href=\"https://github.com/apache/arrow-datafusion/blob/52cf58b46133d448e067455baab0faf8a50e565a/datafusion/core/src/physical_plan/coalesce_batches.rs#L230\">https://github.com/apache/arrow-datafusion/blob/52cf58b46133d448e067455baab0faf8a50e565a/datafusion/core/src/physical_plan/coalesce_batches.rs#L230</a><br>\nThe current implementation I think will trigger coalesce when the input batch is &lt; default batch size<br>\nFor example, if two consecutive inputs of <code class=\"notranslate\">CoalesceBatchesExec</code> have batch size 8000 (default 8192), then they will be concatenated, introducing unnecessary memcpy<br>\nThis will happen if the query has some high selectivity predicates (e.g. TPCH Q1), I experimented setting the coalescing threshold to <code class=\"notranslate\">target_batch_size</code> * 0.8, Q1 can run ~20% faster</p>"
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "retrieved_at": "2026-10-29T19:04:23.002Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/24230",
+    "title": "DiskManager disk-usage counter does not return to zero after a `max_temp_directory_size` error",
+    "issue_number": 24230,
+    "body": "**Describe the bug**\n\n`DiskManager` counts the total size of all spill files in one shared counter (`used_disk_space`). Each `RefCountedTempFile` records its own size. When a file drops, `Drop` subtracts the recorded size from the shared counter.\n\nIn 54.1, [`RefCountedTempFile::update_disk_usage`](https://github.com/apache/datafusion/blob/54.1.0/datafusion/execution/src/disk_manager.rs#L401-L434) does its steps in this order:\n\n1. It charges the shared counter for the new file size.\n2. It returns an error if the counter is above `max_temp_directory_size`.\n3. It records the new size on the file.\n\nWhen step 2 returns the error, step 3 does not run. The file keeps its old recorded size. `Drop` then subtracts too little. The difference stays in the shared counter until the process stops.\n\nThe effect grows over time. After one quota error, the manager rejects spills that fit on disk. Each rejected spill charges more bytes that are never released. On a long-lived process, spill capacity only decreases. Only a restart resets the counter.\n\n**To Reproduce**\n\nStandalone reproduction: https://github.com/fwojciec/datafusion-disk-usage-leak\n\n`cargo run` uses only `datafusion-execution` 54.1.0 and prints:\n\n```text\ncap = 1000 bytes; counter at start = 0\n[ok]  wrote 400 bytes, counter = 400\n[ok]  dropped the file, counter = 0 (expected 0)\n[ok]  second write tripped the cap: Resources exhausted: ...\n[BUG] all files dropped, temp dir empty, counter = 600 (expected 0)\n[BUG] 500-byte spill into an empty dir rejected: Resources exhausted: ...\n[BUG] counter after the rejected attempt = 1100 (leak compounds; only a process restart resets it)\n```\n\n`cargo run --example spill_e2e --features e2e` shows the same leak through the public spill path (`SpillManager::spill_record_batch_and_finish`): 128 bytes remain on the counter after all spill files drop.\n\n**Expected behavior**\n\nAfter a quota error, the counter returns to the true disk usage when the files drop. A rejected spill does not decrease future spill capacity.\n\n**Additional context**\n\n- Affected: released 54.x (`datafusion-execution` 54.1.0 verified). The fix there is small: record the new file size before the quota check. We run 54.1 with that one-statement reorder, and the reproduction then prints `counter = 0` at every step.\n- On `main`, #21882 removed `update_disk_usage`. The quota path of the new `FileSpillWriter::write` rolls the counter back correctly. But its `write_all` error path has the same defect: it charges the global counter before the write and does not release it when the write fails, and the per-file counter is not updated, so `Drop` subtracts too little. I can open a PR for that path if it is useful.\n\n**AI disclosure**\n\nClaude (Fable 5) found this bug during work on our DataFusion-based service, and it wrote the reproduction and this report. I reviewed the analysis and the reproduction code, ran the reproduction against stock 54.1.0, and confirmed the output. Per your AI-assisted contributions policy: I understand the accounting defect end-to-end; I have not yet studied the `main` refactor in the same depth.\n",
+    "state": "open",
+    "user": {
+      "login": "fwojciec",
+      "name": "fwojciec",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/1042048?v=4",
+      "id": 1042048
+    },
+    "assignees": null,
+    "labels": null,
+    "milestone": null,
+    "state_reason": null,
+    "comments": 2,
+    "created_at": "2026-08-10T16:49:01Z",
+    "updated_at": "2026-08-16T00:30:31Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/24230",
+    "display_title": "DiskManager disk-usage counter does not return to zero after a `max_temp_directory_size` error"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/24230#issuecomment-5245359512",
+      "body": "I'd like to work on this issue.\n\nI'll investigate the `FileSpillWriter::write_all` error path on `main`, add a regression test reproducing the disk-usage accounting leak, and submit a fix.\n",
+      "user": {
+        "login": "Himanshu-2005-code",
+        "name": "Himanshu-2005-code",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/182425035?v=4",
+        "id": 182425035
+      },
+      "id": 5245359512,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">I'd like to work on this issue.</p>\n<p dir=\"auto\">I'll investigate the <code class=\"notranslate\">FileSpillWriter::write_all</code> error path on <code class=\"notranslate\">main</code>, add a regression test reproducing the disk-usage accounting leak, and submit a fix.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24230#issuecomment-5304946162",
+      "body": "Opened #24407 for the remaining `FileSpillWriter::write_all` error path on `main`.\n\nThe quota-exceeded path already rolls `used_disk_space` back (covered by `test_rollback_on_limit_exceeded_then_drop_returns_to_zero`). An OS write failure after the reservation did not, so `Drop` subtracted only the last successful file size and the leaked bytes permanently shrank spill capacity.\n\nThe PR releases the reservation on I/O error and adds a regression test that forces the write to fail through a read-only handle.",
+      "user": {
+        "login": "shinzoxD",
+        "name": "shinzoxD",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+        "id": 129059557
+      },
+      "id": 5304946162,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Opened <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161986315\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24407\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24407/hovercard\" href=\"https://github.com/apache/datafusion/pull/24407\">#24407</a> for the remaining <code class=\"notranslate\">FileSpillWriter::write_all</code> error path on <code class=\"notranslate\">main</code>.</p>\n<p dir=\"auto\">The quota-exceeded path already rolls <code class=\"notranslate\">used_disk_space</code> back (covered by <code class=\"notranslate\">test_rollback_on_limit_exceeded_then_drop_returns_to_zero</code>). An OS write failure after the reservation did not, so <code class=\"notranslate\">Drop</code> subtracted only the last successful file size and the leaked bytes permanently shrank spill capacity.</p>\n<p dir=\"auto\">The PR releases the reservation on I/O error and adds a regression test that forces the write to fail through a read-only handle.</p>"
+    }
+  ]
+}

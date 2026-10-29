@@ -1,0 +1,14 @@
+# started on Thu Oct 29 19:18:42 2026
+
+
+ Performance counter stats for 'taskset -c 0-5 /tmp/infralab-datafusion/target/release/infralab-distinct-probe --rows 2000000 --cardinality 2000000 --partitions 4 --kind i64 --mode native --iterations 10' (3 runs):
+
+           3373.74 msec task-clock:u                     #    1.803 CPUs utilized               ( +-  0.16% )
+       12216977579      cycles:u                         #    3.621 GHz                         ( +-  0.14% )
+       19033226372      instructions:u                   #    1.56  insn per cycle              ( +-  0.01% )
+         681257436      cache-references:u               #  201.929 M/sec                       ( +-  0.07% )
+          98791006      cache-misses:u                   #   14.50% of all cache refs           ( +-  0.04% )
+                 0      context-switches:u               #    0.000 /sec                      
+
+           1.87112 +- 0.00495 seconds time elapsed  ( +-  0.26% )
+

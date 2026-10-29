@@ -1,0 +1,26 @@
+{
+  "retrieved_at": "2026-10-29T19:07:28.823Z",
+  "query": "repo:apache/datafusion 21087",
+  "result": {
+    "issues": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088",
+        "title": "perf: default multi COUNT(DISTINCT) logical optimizer rewrite",
+        "issue_number": 21088,
+        "body": "Add MultiDistinctCountRewrite in datafusion-optimizer and register it in Optimizer::new() after SingleDistinctToGroupBy. Rewrites 2+ simple COUNT(DISTINCT) on different args into a join of two-phase aggregates; filter distinct_arg IS NOT NULL on each branch for correct NULL semantics.\r\n\r\n✅ Unit tests in datafusion-optimizer; ✅ SQL integration test (NULLs) in core_integration.\r\n\r\n## Which issue does this PR close?\r\n\r\n- Closes #21087.\r\n\r\n## Rationale for this change\r\n\r\nQueries with multiple COUNT(DISTINCT col_i) in the same GROUP BY can force independent distinct state per aggregate (e.g. separate hash sets), which scales poorly in memory when several high-cardinality distinct columns appear together.\r\n\r\nDataFusion already optimizes the single shared distinct field case via SingleDistinctToGroupBy. This PR adds a conservative logical rewrite for multiple distinct COUNT(DISTINCT …) arguments by splitting work into per-distinct branches joined on the group keys, which reduces peak memory for eligible plans.\r\n\r\nCOUNT(DISTINCT x) must ignore NULL x; the rewrite applies x IS NOT NULL on each distinct branch before inner grouping so semantics stay aligned with count_distinct behavior.\r\n\r\n## What changes are included in this PR?\r\n\r\nNew module: \r\n- datafusion/optimizer/src/multi_distinct_count_rewrite.rs — MultiDistinctCountRewrite (OptimizerRule, bottom-up).\r\n- Register rule in datafusion/optimizer/src/optimizer.rs immediately after SingleDistinctToGroupBy.\r\n- Export module from datafusion/optimizer/src/lib.rs.\r\n\r\nTests:\r\n- datafusion-optimizer: rewrite vs no-op cases (single distinct, mixed aggs, two distincts).\r\n- datafusion core_integration: datafusion/core/tests/sql/aggregates/multi_distinct_count_rewrite.rs — SQL over MemTable with NULLs.\r\n\r\n## Are these changes tested?\r\n\r\nYes.\r\n\r\n- cargo test -p datafusion-optimizer (includes new unit tests).\r\n- cargo test -p datafusion --test core_integration multi_count_distinct (SQL + NULLs).\r\n\r\n## Are there any user-facing changes?\r\n\r\n- Behavior / plans: For queries that match the rule, logical plans (and thus EXPLAIN output) can differ: eligible multi–COUNT(DISTINCT) aggregates may appear as joins of sub-aggregates instead of a single Aggregate with multiple distinct counts.\r\n\r\n- Results: Intended to be semantics-preserving for supported patterns (including NULL handling via filters).\r\n\r\n- Public API: No intentional breaking changes to public Rust APIs; this is an internal optimizer rule enabled by default.\r\n\r\n- Docs: No user guide update required unless maintainers want an “optimizer behavior” note; can add if requested.\r\n",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/21088",
+        "display_title": "perf: default multi COUNT(DISTINCT) logical optimizer rewrite"
+      }
+    ]
+  }
+}

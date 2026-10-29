@@ -1,0 +1,88 @@
+{
+  "checked_at": "2026-10-29T19:28:32.644432+00:00",
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "investigations/20942/repro/Cargo.toml",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "investigations/20942/build.sh"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "investigations/20942/profile.sh"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--exit-code"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "-C",
+        "/tmp/infralab-datafusion/investigation-src",
+        "diff",
+        "--exit-code"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "check": "Python syntax, relative Markdown links",
+      "status": "passed"
+    }
+  ],
+  "engine_changes": "none in either checkout",
+  "extended_workspace_tests": "not run: diagnostic harness and reports only; no engine patch"
+}

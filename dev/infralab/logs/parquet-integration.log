@@ -1,0 +1,496 @@
+ Downloading crates ...
+  Downloaded adler2 v2.0.1
+  Downloaded alloc-no-stdlib v3.0.0
+  Downloaded alloc-stdlib v0.3.0
+  Downloaded anstream v1.0.0
+  Downloaded anstyle-parse v1.0.0
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded linktime-proc-macro v0.2.3
+  Downloaded recursive v0.1.1
+  Downloaded compression-codecs v0.4.46
+  Downloaded compression-core v0.4.34
+  Downloaded ctor v1.0.13
+  Downloaded colorchoice v1.0.5
+  Downloaded constant_time_eq v0.4.2
+  Downloaded crypto-common v0.2.1
+  Downloaded recursive-proc-macro-impl v0.1.1
+  Downloaded sqlparser_derive v0.6.0
+  Downloaded arrayvec v0.7.6
+  Downloaded digest v0.11.2
+  Downloaded stacker v0.1.25
+  Downloaded anstyle-query v1.1.5
+  Downloaded ctutils v0.4.5
+  Downloaded psm v0.1.31
+  Downloaded sha2 v0.11.1
+  Downloaded seq-macro v0.3.6
+  Downloaded utf8parse v0.2.2
+  Downloaded block-buffer v0.12.0
+  Downloaded doc-comment v0.3.4
+  Downloaded env_filter v2.0.0
+  Downloaded ar_archive_writer v0.5.1
+  Downloaded cpufeatures v0.3.0
+  Downloaded simd-adler32 v0.3.9
+  Downloaded cmov v0.5.4
+  Downloaded env_logger v0.11.11
+  Downloaded md-5 v0.11.0
+  Downloaded snap v1.1.1
+  Downloaded tokio-stream v0.1.19
+  Downloaded bzip2 v0.6.1
+  Downloaded blake2 v0.11.0
+  Downloaded const-oid v0.10.2
+  Downloaded hybrid-array v0.4.11
+  Downloaded libbz2-rs-sys v0.2.3
+  Downloaded link-section v0.19.3
+  Downloaded liblzma v0.4.9
+  Downloaded crc32fast v1.5.3
+  Downloaded miniz_oxide v0.9.1
+  Downloaded rand_distr v0.5.1
+  Downloaded typenum v1.20.0
+  Downloaded async-compression v0.4.51
+  Downloaded flate2 v1.1.10
+  Downloaded bigdecimal v0.4.11
+  Downloaded num-bigint v0.4.6
+  Downloaded blake3 v1.8.7
+  Downloaded zlib-rs v0.6.3
+  Downloaded sysinfo v0.39.6
+  Downloaded brotli-decompressor v6.0.0
+  Downloaded object v0.37.3
+  Downloaded sqlparser v0.63.0
+  Downloaded brotli v9.0.0
+  Downloaded jiff v0.2.24
+  Downloaded parquet v60.0.0
+  Downloaded liblzma-sys v0.4.8
+   Compiling object v0.37.3
+   Compiling tokio v1.54.1
+   Compiling crc32fast v1.5.3
+   Compiling log v0.4.34
+   Compiling simd-adler32 v0.3.9
+   Compiling adler2 v2.0.1
+   Compiling nix v0.31.3
+   Compiling stacker v0.1.25
+   Compiling alloc-no-stdlib v3.0.0
+   Compiling miniz_oxide v0.9.1
+   Compiling zlib-rs v0.6.3
+   Compiling twox-hash v2.1.5
+   Compiling alloc-stdlib v0.3.0
+   Compiling lz4_flex v0.14.0
+   Compiling snap v1.1.1
+   Compiling brotli-decompressor v6.0.0
+   Compiling recursive-proc-macro-impl v0.1.1
+   Compiling arrow-ipc v60.0.0
+   Compiling sqlparser_derive v0.6.0
+   Compiling seq-macro v0.3.6
+   Compiling brotli v9.0.0
+   Compiling uuid v1.29.0
+   Compiling typenum v1.20.0
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.5
+   Compiling const-oid v0.10.2
+   Compiling blake3 v1.8.7
+   Compiling cpufeatures v0.3.0
+   Compiling arrayvec v0.7.6
+   Compiling arrow v60.0.0
+   Compiling hybrid-array v0.4.11
+   Compiling constant_time_eq v0.4.2
+   Compiling liblzma-sys v0.4.8
+   Compiling libbz2-rs-sys v0.2.3
+   Compiling crypto-common v0.2.1
+   Compiling block-buffer v0.12.0
+   Compiling bzip2 v0.6.1
+   Compiling ar_archive_writer v0.5.1
+   Compiling object_store v0.14.2
+   Compiling digest v0.11.2
+   Compiling tokio-util v0.7.20
+   Compiling blake2 v0.11.0
+   Compiling md-5 v0.11.0
+   Compiling sha2 v0.11.1
+   Compiling datafusion-common-runtime v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common-runtime)
+   Compiling compression-core v0.4.34
+   Compiling psm v0.1.31
+   Compiling bigdecimal v0.4.11
+   Compiling utf8parse v0.2.2
+   Compiling num-bigint v0.4.6
+   Compiling anstyle-parse v1.0.0
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling tokio-stream v0.1.19
+   Compiling anstream v1.0.0
+   Compiling env_filter v2.0.0
+   Compiling recursive v0.1.1
+   Compiling jiff v0.2.24
+   Compiling sqlparser v0.63.0
+   Compiling doc-comment v0.3.4
+   Compiling globset v0.4.18
+   Compiling link-section v0.19.3
+   Compiling linktime-proc-macro v0.2.3
+   Compiling flate2 v1.1.10
+   Compiling criterion v0.8.2
+   Compiling parquet v60.0.0
+   Compiling ctor v1.0.13
+   Compiling insta v1.49.0
+   Compiling rand_distr v0.5.1
+   Compiling sysinfo v0.39.6
+   Compiling env_logger v0.11.11
+   Compiling liblzma v0.4.9
+   Compiling compression-codecs v0.4.46
+   Compiling async-compression v0.4.51
+   Compiling datafusion-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common)
+   Compiling datafusion-expr-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/expr-common)
+   Compiling test-utils v0.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/test-utils)
+   Compiling datafusion-physical-expr-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr-common)
+   Compiling datafusion-functions-window-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-window-common)
+   Compiling datafusion-functions-aggregate-common v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-aggregate-common)
+   Compiling datafusion-expr v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/expr)
+   Compiling datafusion-physical-expr v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr)
+   Compiling datafusion-execution v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/execution)
+   Compiling datafusion-functions v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions)
+   Compiling datafusion-functions-aggregate v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-aggregate)
+   Compiling datafusion-functions-window v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-window)
+   Compiling datafusion-optimizer v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/optimizer)
+   Compiling datafusion-physical-plan v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-plan)
+   Compiling datafusion-physical-expr-adapter v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-expr-adapter)
+   Compiling datafusion-functions-nested v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-nested)
+   Compiling datafusion-sql v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/sql)
+   Compiling datafusion-session v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/session)
+   Compiling datafusion-datasource v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource)
+   Compiling datafusion-catalog v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/catalog)
+   Compiling datafusion-pruning v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/pruning)
+   Compiling datafusion-datasource-json v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-json)
+   Compiling datafusion-datasource-csv v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-csv)
+   Compiling datafusion-datasource-arrow v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-arrow)
+   Compiling datafusion-physical-optimizer v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/physical-optimizer)
+   Compiling datafusion-datasource-parquet v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/datasource-parquet)
+   Compiling datafusion-catalog-listing v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/catalog-listing)
+   Compiling datafusion-functions-table v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/functions-table)
+   Compiling datafusion v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/core)
+    Finished `ci` profile [unoptimized] target(s) in 40.10s
+     Running tests/parquet_integration.rs (/tmp/infralab-datafusion/target/ci/deps/parquet_integration-d3088b323646cdee)
+
+running 246 tests
+test parquet::custom_reader::custom_payload_and_access_plan_coexist ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_coexists_with_row_filter ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruner_does_not_call_into_builder_mid_row_group ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_fires_for_multi_column_sort_leading_clustered ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_fires_for_multi_column_sort_leading_tied ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_disabled_when_page_index_row_selection_present ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_handles_sort_pushdown_reorder ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_metric_fires_for_topk_descending_limit ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_metric_quiet_without_topk ... ok
+test parquet::dynamic_row_group_pruning::fully_matched_rgs_skip_row_filter ... ok
+test parquet::dynamic_row_group_pruning::missing_null_count_preserves_null_filter_and_count ... ok
+test parquet::content_defined_chunking::cdc_data_round_trip ... ok
+test parquet::expr_adapter::test_custom_schema_adapter_and_custom_expression_adapter ... ok
+test parquet::expr_adapter::test_evolved_decimal_ignores_unselected_sibling ... ok
+test parquet::expr_adapter::test_all_null_struct_decimal_cast_filter_pushdown ... ok
+test parquet::content_defined_chunking::cdc_affects_page_boundaries ... ok
+test parquet::dynamic_row_group_pruning::dynamic_rg_pruning_preserves_missing_null_count ... ok
+test parquet::expr_adapter::test_fixed_size_list_struct_schema_evolution_incompatible_field_fails ... ok
+test parquet::expr_adapter::test_explicit_struct_cast_projection_preserves_sibling_errors ... ok
+test parquet::expr_adapter::test_large_list_struct_schema_evolution_incompatible_field_fails ... ok
+test parquet::expr_adapter::test_fixed_size_list_struct_schema_evolution_non_nullable_missing_field_fails ... ok
+test parquet::expr_adapter::test_large_list_struct_schema_evolution_non_nullable_missing_field_fails ... ok
+test parquet::expr_adapter::test_fixed_size_list_struct_schema_evolution_end_to_end ... ok
+test parquet::expr_adapter::test_list_struct_schema_evolution_incompatible_field_fails ... ok
+test parquet::expr_adapter::test_list_struct_schema_evolution_non_nullable_missing_field_fails ... ok
+test parquet::expr_adapter::test_map_value_struct_incompatible_schema_evolution_rejected ... ok
+test parquet::expr_adapter::test_large_list_struct_schema_evolution_end_to_end ... ok
+test parquet::expr_adapter::test_map_value_struct_schema_evolution_end_to_end ... ok
+test parquet::expr_adapter::test_list_struct_schema_evolution_end_to_end ... ok
+test parquet::dynamic_row_group_pruning::topk_pushdown_does_not_reread_delivered_row_group ... ok
+test parquet::external_access_plan::bad_row_groups ... ok
+test parquet::expr_adapter::test_struct_schema_evolution_projection_and_filter ... ok
+test parquet::custom_reader::route_data_access_ops_to_parquet_file_reader_factory ... ok
+test parquet::expr_adapter::test_physical_expr_adapter_with_non_null_defaults ... ok
+test parquet::external_access_plan::bad_row_selection_extension ... ok
+test parquet::external_access_plan::bad_selection ... ok
+test parquet::expr_adapter::test_physical_expr_adapter_factory_reuse_across_tables ... ok
+test parquet::external_access_plan::mixed_bitmap_and_selector_selections ... ok
+test parquet::external_access_plan::bitmap_row_selection_extension_with_predicate ... ok
+test parquet::external_access_plan::none ... ok
+test parquet::external_access_plan::plan_and_filter ... ok
+test parquet::external_access_plan::row_selection_extension ... ok
+test parquet::external_access_plan::scan_all ... ok
+test parquet::external_access_plan::skip_all ... ok
+test parquet::external_access_plan::row_selection_extension_spanning_row_groups ... ok
+test parquet::file_statistics::check_stats_precision_with_filter_pushdown ... FAILED
+test parquet::file_statistics::list_files_with_session_level_cache ... FAILED
+test parquet::file_statistics::load_table_stats_with_session_level_cache ... FAILED
+test parquet::external_access_plan::selection_scan ... ok
+test parquet::filter_pushdown::predicate_cache_default ... FAILED
+test parquet::filter_pushdown::predicate_cache_pushdown_default_selections_only ... FAILED
+test parquet::filter_pushdown::predicate_cache_pushdown_default ... FAILED
+test parquet::file_statistics::anonymous_parquet_stats_cache_with_explicit_wider_schema ... ok
+test parquet::filter_pushdown::predicate_cache_pushdown_disable ... FAILED
+test parquet::external_access_plan::skip_one_row_group ... ok
+test parquet::filter_pushdown::predicate_cache_stats_issue_19561 ... FAILED
+test parquet::external_access_plan::skip_scan ... ok
+test parquet::external_access_plan::two_selections ... ok
+test parquet::page_pruning::page_index_filter_multi_col ... FAILED
+test parquet::page_pruning::page_index_filter_one_col ... FAILED
+test parquet::ordering::test_create_table_with_order_writes_sorting_columns ... ok
+test parquet::ordering::test_partitioned_table_remaps_sorting_columns ... ok
+test parquet::filter_pushdown::pushed_down_predicate_reports_the_original_error ... ok
+test parquet::page_pruning::page_level_limit_pruning ... ok
+test parquet::page_pruning::page_level_limit_pruning_combines_row_groups_and_pages ... ok
+test parquet::page_pruning::page_level_limit_pruning_is_null_safe ... ok
+test parquet::page_pruning::page_level_limit_pruning_needs_enough_guaranteed_rows ... ok
+test parquet::page_pruning::page_level_limit_pruning_preserves_eliminated_sort ... ok
+test parquet::page_pruning::prune_date32 ... ok
+test parquet::page_pruning::page_level_limit_pruning_requires_every_conjunct ... ok
+test parquet::page_pruning::prune_date64 ... ok
+test parquet::page_pruning::prune_f64_complex_expr ... ok
+test parquet::page_pruning::prune_f64_complex_expr_subtract ... ok
+test parquet::page_pruning::prune_decimal_lt ... ok
+test parquet::page_pruning::prune_decimal_in_list ... ok
+test parquet::page_pruning::prune_decimal_eq ... ok
+test parquet::page_pruning::prune_f64_scalar_fun ... ok
+test parquet::page_pruning::prune_f64_lt ... ok
+test parquet::page_pruning::prune_f64_scalar_fun_and_gt ... ok
+test parquet::page_pruning::prune_int16_complex_expr ... ok
+test parquet::page_pruning::prune_int16_complex_expr_subtract ... ok
+test parquet::page_pruning::prune_int16_eq ... ok
+test parquet::page_pruning::prune_int16_eq_in_list ... ok
+test parquet::page_pruning::prune_int16_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_int16_scalar_fun ... ok
+test parquet::page_pruning::prune_int16_gt ... ok
+test parquet::page_pruning::prune_int16_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_int16_lt ... ok
+test parquet::page_pruning::prune_int32_complex_expr_subtract ... ok
+test parquet::page_pruning::prune_int32_complex_expr ... ok
+test parquet::page_pruning::prune_int32_eq ... ok
+test parquet::page_pruning::prune_int32_eq_in_list ... ok
+test parquet::page_pruning::prune_int32_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_int32_scalar_fun ... ok
+test parquet::page_pruning::prune_int32_gt ... ok
+test parquet::page_pruning::prune_int32_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_int32_lt ... ok
+test parquet::page_pruning::prune_int64_complex_expr ... ok
+test parquet::page_pruning::prune_int64_complex_expr_subtract ... ok
+test parquet::page_pruning::prune_int64_eq ... ok
+test parquet::page_pruning::prune_int64_eq_in_list ... ok
+test parquet::page_pruning::prune_int64_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_int64_scalar_fun ... ok
+test parquet::page_pruning::prune_int64_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_int64_gt ... ok
+test parquet::page_pruning::prune_int64_lt ... ok
+test parquet::page_pruning::prune_int8_complex_expr ... ok
+test parquet::page_pruning::prune_int8_complex_expr_subtract ... ok
+test parquet::page_pruning::prune_int8_eq ... ok
+test parquet::page_pruning::prune_int8_eq_in_list ... ok
+test parquet::page_pruning::prune_int8_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_int8_scalar_fun ... ok
+test parquet::page_pruning::prune_int8_gt ... ok
+test parquet::page_pruning::prune_int8_lt ... ok
+test parquet::page_pruning::prune_int8_scalar_fun_and_eq ... ok
+test parquet::filter_pushdown::single_file_small_data_pages ... ok
+test parquet::page_pruning::prune_timestamps_micros ... ok
+test parquet::page_pruning::prune_timestamps_millis ... ok
+test parquet::page_pruning::prune_timestamps_seconds ... ok
+test parquet::page_pruning::prune_uint16_complex_expr ... ok
+test parquet::page_pruning::prune_timestamps_nanos ... ok
+test parquet::page_pruning::prune_uint16_eq ... ok
+test parquet::page_pruning::prune_uint16_gt ... ok
+test parquet::page_pruning::prune_uint16_lt ... ok
+test parquet::page_pruning::prune_uint16_eq_in_list ... ok
+test parquet::page_pruning::prune_uint16_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_uint16_scalar_fun ... ok
+test parquet::page_pruning::prune_uint32_eq ... ok
+test parquet::page_pruning::prune_uint32_complex_expr ... ok
+test parquet::page_pruning::prune_uint16_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_uint32_eq_in_list ... ok
+test parquet::page_pruning::prune_uint32_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_uint32_gt ... ok
+test parquet::page_pruning::prune_uint32_lt ... ok
+test parquet::page_pruning::prune_uint32_scalar_fun ... ok
+test parquet::page_pruning::prune_uint64_complex_expr ... ok
+test parquet::page_pruning::prune_uint32_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_uint64_eq ... ok
+test parquet::page_pruning::prune_uint64_eq_in_list ... ok
+test parquet::page_pruning::prune_uint64_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_uint64_lt ... ok
+test parquet::page_pruning::prune_uint64_gt ... ok
+test parquet::page_pruning::prune_uint64_scalar_fun ... ok
+test parquet::page_pruning::prune_uint64_scalar_fun_and_eq ... ok
+test parquet::page_pruning::prune_uint8_complex_expr ... ok
+test parquet::page_pruning::prune_uint8_eq_in_list ... ok
+test parquet::page_pruning::prune_uint8_eq ... ok
+test parquet::page_pruning::prune_uint8_eq_in_list_negated ... ok
+test parquet::page_pruning::prune_uint8_lt ... ok
+test parquet::page_pruning::prune_uint8_gt ... ok
+test parquet::page_pruning::prune_uint8_scalar_fun ... ok
+test parquet::page_pruning::prune_uint8_scalar_fun_and_eq ... ok
+test parquet::page_pruning::test_parquet_opener_without_page_index ... ok
+test parquet::row_group_pruning::prune_binary_eq_match ... ok
+test parquet::page_pruning::without_pushdown_filter ... ok
+test parquet::row_group_pruning::prune_binary_eq_no_match ... ok
+test parquet::row_group_pruning::prune_binary_neq ... ok
+test parquet::row_group_pruning::prune_binary_lt ... ok
+test parquet::row_group_pruning::prune_date32 ... ok
+test parquet::row_group_pruning::prune_date64 ... ok
+test parquet::page_pruning::test_pages_with_null_values ... ok
+test parquet::row_group_pruning::prune_f64_complex_expr ... ok
+test parquet::row_group_pruning::prune_f64_complex_expr_subtract ... ok
+test parquet::row_group_pruning::prune_disabled ... ok
+test parquet::row_group_pruning::prune_decimal_lt ... ok
+test parquet::row_group_pruning::prune_f64_lt ... ok
+test parquet::row_group_pruning::prune_f64_scalar_fun ... ok
+test parquet::row_group_pruning::prune_f64_scalar_fun_and_gt ... ok
+test parquet::row_group_pruning::prune_fixedsizebinary_eq_no_match ... ok
+test parquet::row_group_pruning::prune_decimal_in_list ... ok
+test parquet::row_group_pruning::prune_decimal_eq ... ok
+test parquet::row_group_pruning::prune_fixedsizebinary_eq_match ... ok
+test parquet::row_group_pruning::prune_fixedsizebinary_neq ... ok
+test parquet::row_group_pruning::prune_fixedsizebinary_lt ... ok
+test parquet::row_group_pruning::prune_int32_complex_expr ... ok
+test parquet::row_group_pruning::prune_int32_complex_expr_subtract ... ok
+test parquet::row_group_pruning::prune_int32_eq ... ok
+test parquet::row_group_pruning::prune_int32_eq_in_list ... ok
+test parquet::row_group_pruning::prune_int32_eq_in_list_2 ... ok
+test parquet::row_group_pruning::prune_int32_eq_in_list_negated ... ok
+test parquet::row_group_pruning::prune_int32_eq_large_in_list ... ok
+test parquet::row_group_pruning::prune_int32_scalar_fun ... ok
+test parquet::row_group_pruning::prune_int32_scalar_fun_and_eq ... ok
+test parquet::row_group_pruning::prune_int64_complex_expr ... ok
+test parquet::row_group_pruning::prune_int64_complex_expr_subtract ... ok
+test parquet::row_group_pruning::prune_int32_lt ... ok
+test parquet::row_group_pruning::prune_int64_eq ... ok
+test parquet::row_group_pruning::prune_int64_eq_in_list ... ok
+test parquet::row_group_pruning::prune_int64_eq_in_list_2 ... ok
+test parquet::row_group_pruning::prune_int64_eq_in_list_negated ... ok
+test parquet::row_group_pruning::prune_int64_scalar_fun ... ok
+test parquet::row_group_pruning::prune_int64_scalar_fun_and_eq ... ok
+test parquet::row_group_pruning::prune_int64_lt ... ok
+test parquet::row_group_pruning::prune_like_prefix ... ok
+test parquet::row_group_pruning::prune_string_eq_match ... ok
+test parquet::row_group_pruning::prune_string_lt ... ok
+test parquet::row_group_pruning::prune_string_eq_no_match ... ok
+test parquet::row_group_pruning::prune_string_neq ... ok
+test parquet::row_group_pruning::prune_is_not_distinct_from_i32 ... ok
+test parquet::row_group_pruning::prune_periods_in_column_names ... ok
+test parquet::row_group_pruning::prune_timestamps_micros ... ok
+test parquet::row_group_pruning::prune_timestamps_millis ... ok
+test parquet::row_group_pruning::prune_timestamps_nanos ... ok
+test parquet::row_group_pruning::prune_timestamps_seconds ... ok
+test parquet::row_group_pruning::prune_uint32_complex_expr ... ok
+test parquet::row_group_pruning::prune_uint32_eq_in_list_2 ... ok
+test parquet::row_group_pruning::prune_uint32_eq_in_list ... ok
+test parquet::row_group_pruning::prune_uint32_eq ... ok
+test parquet::row_group_pruning::prune_uint32_eq_large_in_list ... ok
+test parquet::row_group_pruning::prune_uint32_eq_in_list_negated ... ok
+test parquet::row_group_pruning::prune_uint32_lt ... ok
+test parquet::row_group_pruning::prune_uint64_complex_expr ... ok
+test parquet::row_group_pruning::prune_uint32_scalar_fun ... ok
+test parquet::row_group_pruning::prune_uint32_scalar_fun_and_eq ... ok
+test parquet::row_group_pruning::prune_uint64_eq ... ok
+test parquet::row_group_pruning::prune_uint64_eq_in_list_2 ... ok
+test parquet::row_group_pruning::prune_uint64_eq_in_list ... ok
+test parquet::row_group_pruning::prune_uint64_lt ... ok
+test parquet::row_group_pruning::prune_uint64_eq_in_list_negated ... ok
+test parquet::row_group_pruning::prune_uint64_scalar_fun ... ok
+test parquet::row_group_pruning::prune_uint64_scalar_fun_and_eq ... ok
+test parquet::row_group_pruning::test_bloom_filter_unsigned_integer_dict ... ok
+test parquet::row_group_pruning::test_bloom_filter_decimal_dict ... ok
+test parquet::row_group_pruning::test_limit_pruning_basic ... ok
+test parquet::row_group_pruning::test_limit_pruning_complex_filter ... ok
+test parquet::row_group_pruning::test_bloom_filter_binary_dict ... ok
+test parquet::row_group_pruning::test_limit_pruning_exceeds_fully_matched ... ok
+test parquet::row_group_pruning::test_bloom_filter_integer_dict ... ok
+test parquet::row_group_pruning::test_limit_pruning_multiple_fully_matched ... ok
+test parquet::row_group_pruning::test_limit_pruning_no_fully_matched ... ok
+test parquet::row_group_pruning::test_bloom_filter_utf8_dict ... ok
+test parquet::schema::schema_merge_can_preserve_metadata ... ok
+test parquet::schema_coercion::multi_parquet_coercion ... ok
+test parquet::schema::schema_merge_ignores_metadata_by_default ... ok
+test parquet::schema_coercion::multi_parquet_coercion_projection ... ok
+test parquet::schema::schema_merge_marks_partially_present_columns_nullable ... ok
+test parquet::string_in_list_pruning::in_list_with_null_preserves_filter_semantics ... ok
+test parquet::row_group_pruning::test_row_group_with_null_values ... ok
+test parquet::string_in_list_pruning::ordered_in_list_parquet_pruning ... ok
+test parquet::schema::schema_merge_marks_missing_nested_children_nullable ... ok
+test parquet::string_in_list_pruning::string_not_in_list_with_truncated_bounds ... ok
+test parquet::string_in_list_pruning::string_not_in_list_page_pruning ... ok
+test parquet::string_in_list_pruning::string_in_list_page_pruning ... ok
+test parquet::string_in_list_pruning::string_in_list_row_group_pruning ... ok
+test parquet::string_in_list_pruning::string_not_in_list_row_group_pruning ... ok
+test parquet::filter_pushdown::single_file ... ok
+
+failures:
+
+---- parquet::file_statistics::check_stats_precision_with_filter_pushdown stdout ----
+
+thread 'parquet::file_statistics::check_stats_precision_with_filter_pushdown' (3457248) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- parquet::file_statistics::list_files_with_session_level_cache stdout ----
+
+thread 'parquet::file_statistics::list_files_with_session_level_cache' (3457249) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::file_statistics::load_table_stats_with_session_level_cache stdout ----
+
+thread 'parquet::file_statistics::load_table_stats_with_session_level_cache' (3457250) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::filter_pushdown::predicate_cache_default stdout ----
+
+thread 'parquet::filter_pushdown::predicate_cache_default' (3457251) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::filter_pushdown::predicate_cache_pushdown_default_selections_only stdout ----
+
+thread 'parquet::filter_pushdown::predicate_cache_pushdown_default_selections_only' (3457253) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::filter_pushdown::predicate_cache_pushdown_default stdout ----
+
+thread 'parquet::filter_pushdown::predicate_cache_pushdown_default' (3457252) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::filter_pushdown::predicate_cache_pushdown_disable stdout ----
+
+thread 'parquet::filter_pushdown::predicate_cache_pushdown_disable' (3457254) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::filter_pushdown::predicate_cache_stats_issue_19561 stdout ----
+
+thread 'parquet::filter_pushdown::predicate_cache_stats_issue_19561' (3457255) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::page_pruning::page_index_filter_multi_col stdout ----
+
+thread 'parquet::page_pruning::page_index_filter_multi_col' (3457266) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+---- parquet::page_pruning::page_index_filter_one_col stdout ----
+
+thread 'parquet::page_pruning::page_index_filter_one_col' (3457267) panicked at datafusion/common/src/test_util.rs:253:21:
+failed to get parquet data dir: env `PARQUET_TEST_DATA` is undefined or has empty value, and the pre-defined data dir `/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common/../../parquet-testing/data` not found
+HINT: try running `git submodule update --init`
+
+
+failures:
+    parquet::file_statistics::check_stats_precision_with_filter_pushdown
+    parquet::file_statistics::list_files_with_session_level_cache
+    parquet::file_statistics::load_table_stats_with_session_level_cache
+    parquet::filter_pushdown::predicate_cache_default
+    parquet::filter_pushdown::predicate_cache_pushdown_default
+    parquet::filter_pushdown::predicate_cache_pushdown_default_selections_only
+    parquet::filter_pushdown::predicate_cache_pushdown_disable
+    parquet::filter_pushdown::predicate_cache_stats_issue_19561
+    parquet::page_pruning::page_index_filter_multi_col
+    parquet::page_pruning::page_index_filter_one_col
+
+test result: FAILED. 236 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+
+error: test failed, to rerun pass `-p datafusion --test parquet_integration`

@@ -1,0 +1,39 @@
+{
+  "retrieved_at": "2026-10-29T19:04:23.070Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/20942",
+    "title": "Add MultiDistinctToCrossJoin optimizer rule for parallel distinct aggregates",
+    "issue_number": 20942,
+    "body": "### Is your feature request related to a problem or challenge?\n\nQueries like `count(DISTINCT hits.SearchPhrase), count(DISTINCT hits.MobilePhone), count(DISTINCT hits.MobilePhoneModel)` still don't run in parallel as they can not be optimized using the `SingleDistinctToGroupBy` optimization. \n\n### Describe the solution you'd like\n\nChange it to issue the distinct queries in a separate stage, joining the results (either using join or union but join has a advantage on memory usage and cache locality as it runs them one by one).\n\n### Describe alternatives you've considered\n\n_No response_\n\n### Additional context\n\n_No response_",
+    "state": "open",
+    "user": {
+      "login": "Dandandan",
+      "name": "Dandandan",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+      "id": 163737
+    },
+    "assignees": null,
+    "labels": [
+      {
+        "name": "enhancement",
+        "color": "a2eeef",
+        "description": "New feature or request"
+      },
+      {
+        "name": "performance",
+        "color": "EA11B6",
+        "description": "Make DataFusion faster"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 0,
+    "created_at": "2026-03-14T09:55:35Z",
+    "updated_at": "2026-03-16T09:05:31Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/20942",
+    "display_title": "Add MultiDistinctToCrossJoin optimizer rule for parallel distinct aggregates"
+  },
+  "comments": []
+}

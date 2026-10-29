@@ -1,0 +1,26 @@
+{
+  "retrieved_at": "2026-10-29T19:04:58.052Z",
+  "query": "repo:apache/datafusion 24230",
+  "result": {
+    "issues": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407",
+        "title": "fix: roll back DiskManager usage when spill write I/O fails",
+        "issue_number": 24407,
+        "body": "## Which issue does this PR close?\n\n- Closes #24230.\n\n## Rationale for this change\n\n`DiskManager` charges `used_disk_space` before writing a spill file so concurrent writers cannot collectively exceed `max_temp_directory_size`. On a quota miss, `FileSpillWriter::write` already rolls that reservation back.\n\nThe OS `write_all` error path did not. The global counter stayed charged, `current_file_disk_usage` was left at the last successful size, and `RefCountedTempFile::Drop` subtracted too little. After one I/O error the leaked bytes stay until process exit, so later spills that fit on disk are rejected.\n\n#21882 already fixed the quota path on `main`. This is the remaining `write_all` error path called out in #24230.\n\n## What changes are included in this PR?\n\n- If the OS write fails after the reservation, subtract the reserved bytes from `used_disk_space` before returning the I/O error.\n- Add a regression test that writes 400 bytes into a 1000-byte cap, then forces two 600-byte writes through a read-only handle. Without the rollback the first leak fills the cap (so the second attempt is a quota error, and a later 500-byte spill is rejected). With the fix the counter stays at 400, the 500-byte write succeeds, and dropping the file returns the counter to 0.\n\n## Are these changes tested?\n\nYes.\n\n- New `test_write_io_error_rolls_back_disk_usage` in `datafusion/execution/src/disk_manager.rs`.\n- Existing `test_rollback_on_limit_exceeded_then_drop_returns_to_zero` still covers the quota path.\n\nRan:\n\n- `cargo test -p datafusion-execution --lib disk_manager`\n- `cargo clippy -p datafusion-execution --lib --all-targets -- -D warnings`\n\n## Are there any user-facing changes?\n\nA failed spill write no longer permanently reduces remaining spill capacity. There is no API change.",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/24407",
+        "display_title": "fix: roll back DiskManager usage when spill write I/O fails"
+      }
+    ]
+  }
+}

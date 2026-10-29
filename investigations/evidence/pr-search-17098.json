@@ -1,0 +1,62 @@
+{
+  "retrieved_at": "2026-10-29T19:04:54.500Z",
+  "query": "repo:apache/datafusion 17098",
+  "result": {
+    "issues": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/25657",
+        "title": "perf: skip wasted per-batch work in TopK insert_batch",
+        "issue_number": 25657,
+        "body": "## Which issue does this PR close?\r\n\r\n- Related to #17098.\r\n\r\n## Rationale for this change\r\n\r\nOnce the TopK heap is full, most input batches are rejected outright by the threshold filter. `insert_batch` still evaluated every sort expression over the whole batch before checking the filter, then evaluated the same expressions again inside the filter, and cloned the batch even when nothing from it was kept. With an expression sort key that doubles the per-batch cost for no output.\r\n\r\n## What changes are included in this PR?\r\n\r\n- The threshold filter runs before the sort keys are evaluated; fully rejected batches skip sort-key evaluation.\r\n- The batch moves into the heap entry instead of being cloned. The last row's common prefix is encoded before the move so early completion still compares against the same boundary at the same point.\r\n- The per-batch timer clones one metric instead of the whole baseline set, here and in `PartitionedTopK`, `PartitionedTopKRank`, and `PartitionedTopKDenseRank`.\r\n\r\n`SELECT l_orderkey, l_extendedprice FROM lineitem ORDER BY l_extendedprice + 0 DESC LIMIT 1` on TPC-H SF1, TopK `elapsed_compute`, median of five: 152 ms before, 94 ms after. `sort-tpch --limit 10` shows no change.\r\n\r\nOne nuance: a sort-key expression that errors only on rows the threshold already rejects no longer raises, because those batches skip sort-key evaluation. The filter evaluates the same expression over the batch first, so this can only differ for a secondary key under short-circuit evaluation.\r\n\r\n## What is the testing strategy for this PR?\r\n\r\nNew unit tests in `datafusion/physical-plan/src/topk`: `test_batch_rejected_by_threshold_leaves_heap_untouched` and `test_expression_sort_key_matches_column_sort_key`. Existing TopK tests and the `topk`, `window` and `limit` sqllogictest files pass unchanged.\r\n\r\n## Are there any user-facing changes?\r\n\r\nNo.\r\n",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/25657",
+        "display_title": "perf: skip wasted per-batch work in TopK insert_batch"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/18514",
+        "title": "Rewrite order by limit 1 to Min/Max aggregate",
+        "issue_number": 18514,
+        "body": "## Which issue does this PR close?\r\n\r\n\r\n- Closes part of  [#17098](https://github.com/apache/datafusion/issues/17098)\r\n\r\n## Rationale for this change\r\n\r\nAdd rewrite for order by limit 1, but limit to only project to the column which we order by.\r\n\r\n## What changes are included in this PR?\r\n\r\nAdd rewrite for order by limit 1, but limit to only project to the column which we order by.\r\n\r\n## Are these changes tested?\r\n\r\nYes\r\n\r\n## Are there any user-facing changes?\r\n\r\nNo",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/18514",
+        "display_title": "Rewrite order by limit 1 to Min/Max aggregate"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/18509",
+        "title": "Sort with limit for single arrays",
+        "issue_number": 18509,
+        "body": "## Which issue does this PR close?\r\n\r\n<!--\r\nWe generally require a GitHub issue to be filed for all bug fixes and enhancements and this helps us generate change logs for our releases. You can link an issue to this PR using the GitHub syntax. For example `Closes #123` indicates that this PR will close issue #123.\r\n-->\r\n\r\nSee: https://github.com/apache/datafusion/issues/17098#issuecomment-3486760255\r\n- Addresses #17098\r\n\r\n## Rationale for this change\r\n\r\n<!--\r\n Why are you proposing this change? If this is already explained clearly in the issue then this section is not needed.\r\n Explaining clearly why changes are proposed helps reviewers understand your changes and offer better suggestions for fixes.  \r\n-->\r\n\r\n## What changes are included in this PR?\r\n\r\n<!--\r\nThere is no need to duplicate the description in the issue here but it is sometimes worth providing a summary of the individual changes in this PR.\r\n-->\r\n\r\n## Are these changes tested?\r\n\r\n<!--\r\nWe typically require tests for all PRs in order to:\r\n1. Prevent the code from being accidentally broken by subsequent changes\r\n2. Serve as another way to document the expected behavior of the code\r\n\r\nIf tests are not included in your PR, please explain why (for example, are they covered by existing tests)?\r\n-->\r\n\r\n## Are there any user-facing changes?\r\n\r\n<!--\r\nIf there are user-facing changes then we may require documentation to be updated before approving the PR.\r\n-->\r\n\r\n<!--\r\nIf there are any breaking changes to public APIs, please add the `api change` label.\r\n-->\r\n",
+        "state": null,
+        "user": null,
+        "assignees": null,
+        "labels": null,
+        "milestone": null,
+        "state_reason": null,
+        "comments": null,
+        "created_at": null,
+        "updated_at": null,
+        "closed_at": null,
+        "display_url": "https://github.com/apache/datafusion/pull/18509",
+        "display_title": "Sort with limit for single arrays"
+      }
+    ]
+  }
+}

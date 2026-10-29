@@ -1,0 +1,183 @@
+{
+  "retrieved_at": "2026-10-29T19:04:20.356Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/24929",
+    "title": "SingleDistinctToGroupBy fires where it costs far more memory: adding count(*) makes a query ~1000x cheaper",
+    "issue_number": 24929,
+    "body": "### Describe the bug\n\nAdding `count(*)` to a grouped query that computes `min(DISTINCT x)` makes the query need 1000x less memory. The extra aggregate makes the query compute strictly more work. It also takes the plan out of `SingleDistinctToGroupBy`, and that rewrite is what costs the memory.\n\n`SingleDistinctToGroupBy` turns `AGG(DISTINCT x)` into an inner `GROUP BY (group_keys, x)` plus an outer aggregate. The inner aggregate holds one row per distinct `(group_keys, x)` pair instead of one row per group. Every other aggregate in the query moves down to that finer grain.\n\n### To Reproduce\n\nEverything below runs in a stock `datafusion-cli`. There is no patch, no feature flag and no custom build.\n\nBuild the table:\n\n```sql\nCREATE TABLE t AS\nSELECT v % 2000 AS g, (v * 48271) % 999983 AS x, v % 1000 AS y\nFROM (SELECT unnest(generate_series(0, 3999999)) AS v);\n```\n\nThat is 4,000,000 rows, 2,000 groups, 999,983 distinct values of `x`, and 4,000,000 distinct `(g, x)` pairs.\n\nRun each query in its own session, under a bounded memory pool:\n\n```\ndatafusion-cli -m <limit> -d 0 --mem-pool-type greedy -f <file>\n```\n\nStart the file with `SET datafusion.execution.target_partitions = 1;`, then the `CREATE TABLE` above, then one query. One partition makes the result the same on any machine. `-d 0` turns spilling off, so `<limit>` measures the memory the query needs, not how far it can spill.\n\n| query | rule fires | smallest limit that completes |\n| --- | --- | --- |\n| `SELECT g, min(DISTINCT x) FROM t GROUP BY g` | yes | 192M, fails at 160M |\n| `SELECT g, count(*), min(DISTINCT x) FROM t GROUP BY g` | no | 192K, fails at 160K |\n\nAt `-m 32M` the first query fails. The second one, which computes strictly more, returns its 2,000 rows in 10 ms.\n\nThe two plans differ only by the `count(*)`:\n\n```\n> EXPLAIN FORMAT indent SELECT g, min(DISTINCT x) FROM t GROUP BY g;\nProjection: t.g, min(alias1) AS min(DISTINCT t.x)\n  Aggregate: groupBy=[[t.g]], aggr=[[min(alias1)]]\n    Aggregate: groupBy=[[t.g, t.x AS alias1]], aggr=[[]]\n      TableScan: t projection=[g, x]\n\n> EXPLAIN FORMAT indent SELECT g, count(*), min(DISTINCT x) FROM t GROUP BY g;\nProjection: t.g, count(Int64(1)) AS count(*), min(DISTINCT t.x)\n  Aggregate: groupBy=[[t.g]], aggr=[[count(Int64(1)), min(DISTINCT t.x)]]\n    TableScan: t projection=[g, x]\n```\n\nThe rewritten plan builds a hash table of 4,000,000 rows. The plan that also computes `count(*)` keeps 2,000 groups.\n\nA second pair of queries behaves the same way:\n\n| query | rule fires | smallest limit that completes |\n| --- | --- | --- |\n| `SELECT g, sum(y), sum(DISTINCT x) FROM t GROUP BY g` | yes | 224M, fails at 192M |\n| `SELECT g, count(*), sum(y), sum(DISTINCT x) FROM t GROUP BY g` | no | 96M, fails at 64M |\n\nIf you leave spilling on and drop `-d 0`, the first query still completes at a small limit. It spills to disk to get there. The second query never spills.\n\n#### Peak process memory\n\nThe memory limit is one instrument. Process memory is a second one, and it needs no limit and no build. Run the same two queries with no `-m` at all, under `/usr/bin/time -l` on macOS or `/usr/bin/time -v` on Linux.\n\n| run | peak RSS |\n| --- | --- |\n| build the table, then `SELECT 1` | 289 MiB |\n| build the table, then `SELECT g, min(DISTINCT x) FROM t GROUP BY g` | 525 MiB |\n| build the table, then `SELECT g, count(*), min(DISTINCT x) FROM t GROUP BY g` | 291 MiB |\n\nThe table itself accounts for the 289 MiB baseline. On top of that baseline the first query costs about 236 MiB and the second costs about 1 MiB. Three runs of each gave 525, 556 and 525 MiB for the first query, and 291 MiB every time for the second.\n\n`datafusion-cli` sets mimalloc as its global allocator, and mimalloc reports the same thing from inside the process. `MIMALLOC_SHOW_STATS=1` prints `peak rss: 524.8 MiB, peak commit: 538.0 MiB` for the first query and `peak rss: 290.6 MiB, peak commit: 325.8 MiB` for the second. This is committed memory, not an accounting artifact.\n\n### Expected behavior\n\nAdding an aggregate to a query should not cut its memory requirement by three orders of magnitude. The rewrite should not fire on plans where it costs more than the plan it replaces.\n\nWhat the rule fires on today is which aggregate functions appear in the query. It accepts the plan when every non-distinct aggregate is `sum`, `min` or `max`, and rejects it otherwise. That condition says nothing about whether the rewrite is cheaper, so the rule fires where it is a pure loss. `count` is outside the accepted set, which is why a `count(*)` makes the query cheap.\n\n### Additional context\n\n#### The rewrite is a large win on other plans\n\nThe same measurement across five distinct aggregates, two group counts and two column types. The table, the method and the companion aggregate are the same in every row. The `rule on` column is `SELECT g, sum(y), AGG(DISTINCT x) FROM t GROUP BY g`. The `rule off` column is the same query with `count(*)` added, which is the only difference. `EXPLAIN` confirms the rewrite in every `rule on` row and its absence in every `rule off` row.\n\n| distinct aggregate | groups | `x` type | rule on | rule off | |\n| --- | --- | --- | --- | --- | --- |\n| `min(DISTINCT x)` | 2,000 | BIGINT | 224M | 192K | 1195x worse |\n| `sum(DISTINCT x)` | 2,000 | BIGINT | 224M | 96M | 2.3x worse |\n| `avg(DISTINCT x)` | 2,000 | BIGINT | 224M | 96M | 2.3x worse |\n| `count(DISTINCT x)` | 2,000 | BIGINT | 224M | 192M | 1.2x worse |\n| `array_agg(DISTINCT x)` | 2,000 | BIGINT | 224M | 384M | 1.7x better |\n| `count(DISTINCT x)` | 500,000 | BIGINT | 224M | 224M | no change |\n| `count(DISTINCT x)` | 500,000 | VARCHAR | 256M | 14G | 56x better |\n\nSo the rule is worth keeping. It is 56x better for `count(DISTINCT <string>)` at high group cardinality, and 1.7x better for `array_agg(DISTINCT)`. Deleting it outright would trade one regression for another. A gate that reflects when the rewrite helps looks more promising than either the current function-name condition or a blanket removal.\n\nUsing `sum`, `min` or `max` as the non-distinct companion gives the same numbers. All three put the `min(DISTINCT x)` pair at 224M with the rule on and 192K with it off. The companion aggregate does not affect the mechanism. It only decides whether the rule fires.\n\n#### Why the outcome varies\n\nWhat decides the result is the storage cost per distinct value on each side.\n\nThe rewrite materializes one hash table row per distinct `(group_keys, x)` pair, plus an accumulator slot per other aggregate at that grain. It wins when the accumulator it replaces costs more than that per value, such as a per-group hash set of strings or an `array_agg`. It loses when the accumulator it replaces costs less.\n\n`min` and `max` are the extreme case, because `min(DISTINCT x)` equals `min(x)`. DataFusion already knows this: `min` and `max` ignore the `DISTINCT` flag, and on the table above the two expressions agree on all 2,000 groups. So the plan without the rewrite holds one scalar per group, and the rewrite builds a hash table of 4,000,000 rows to reach the same answer.\n\n#### Related work\n\n- #11360 asks whether the rule is still needed now that distinct accumulators exist. Its ClickBench comparison found no clear advantage from deleting it. That thread measures planning and runtime, and asks whether the rule is *unnecessary*. This report is about the rule being *actively harmful* on a class of plans, on a trigger condition unrelated to its benefit. It also shows the rule is genuinely valuable on other plans.\n- #15099 proposed removing the rule outright. The table above is evidence against that: two of its seven rows get worse without the rule.\n- #8266, closing #8123, added the tolerance for non-distinct `sum`, `min` and `max`. That tolerance is what lets the rule fire on the `min(DISTINCT)` and `sum(DISTINCT)` cases above.\n- #20782 proposed skipping the rewrite for `count(DISTINCT)` with no `GROUP BY`, on the same grounds that the direct distinct accumulator is cheaper. It was closed without merging.\n- #11686 proposes eliminating `DISTINCT` on `min` and `max` early, which would remove the worst case here at its source.\n- #20942 and #21087 cover the multiple-distinct case, which this rule does not handle at all.\n- #24704 tracks blocked and chunked memory management in hash aggregation.\n\n#### Method\n\nEach memory figure is the smallest value at which the query completes. I found it by bisecting a fixed ladder that runs from 64K to 12G in steps of 14% to 50%. The next value down the ladder fails in every row of every table above, and repeated runs at both values always give the same result. The one figure off that ladder is the 14G rule-off arm of the VARCHAR row, which needs more than the ladder covers. I bracketed it by hand: 14G completes and 13G fails.\n\nEvery run uses `-d 0`, `--mem-pool-type greedy` and `SET datafusion.execution.target_partitions = 1`. The `CREATE TABLE` takes no memory from the pool: it succeeds at `-m 64K`.\n\nThe three datasets differ only in the `g` and `x` expressions. `v % 2000` and `v % 500000` give the two group counts. `CAST((v * 48271) % 999983 AS VARCHAR)` gives the string column. In all three, `x` is drawn from 999,983 values and every one of the 4,000,000 rows is a distinct `(g, x)` pair.\n\n#### Note on heap profiling\n\n`datafusion-cli` cannot produce a jemalloc heap profile as shipped. `datafusion-cli/src/main.rs` installs mimalloc as the global allocator with no feature flag behind it, and no crate in the workspace depends on jemalloc, so `MALLOC_CONF` has no effect. Getting a jemalloc profile needs a source change and a rebuild. `MIMALLOC_SHOW_STATS=1` and `/usr/bin/time` both work on the shipped binary, which is why the numbers above use those.\n\n#### Code\n\n`is_single_distinct_agg` in `datafusion/optimizer/src/single_distinct_to_groupby.rs` holds the trigger condition. `datafusion/functions-aggregate/src/min_max.rs` never reads `is_distinct`, which is correct and is what makes the `min` case the extreme one.\n\n#### Version\n\nReproduced with `datafusion-cli 55.0.0`, built from `main` at `b9a0053677`, on macOS arm64. `single_distinct_to_groupby.rs` and `min_max.rs` are unchanged at `9fc7a4d5d`, the current `main` head at the time of writing.\n",
+    "state": "open",
+    "user": {
+      "login": "adriangb",
+      "name": "adriangb",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/1755071?v=4",
+      "id": 1755071
+    },
+    "assignees": null,
+    "labels": null,
+    "milestone": null,
+    "state_reason": null,
+    "comments": 7,
+    "created_at": "2026-09-03T18:49:37Z",
+    "updated_at": "2026-09-29T20:28:26Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/24929",
+    "display_title": "SingleDistinctToGroupBy fires where it costs far more memory: adding count(*) makes a query ~1000x cheaper"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5534701560",
+      "body": "Is this issue available to pick? ",
+      "user": {
+        "login": "mkleen",
+        "name": "mkleen",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/338234?v=4",
+        "id": 338234
+      },
+      "id": 5534701560,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Is this issue available to pick?</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5536187094",
+      "body": "Yes it is!",
+      "user": {
+        "login": "adriangb",
+        "name": "adriangb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1755071?v=4",
+        "id": 1755071
+      },
+      "id": 5536187094,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Yes it is!</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5536290404",
+      "body": "take",
+      "user": {
+        "login": "mkleen",
+        "name": "mkleen",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/338234?v=4",
+        "id": 338234
+      },
+      "id": 5536290404,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">take</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5890220413",
+      "body": "I am going to step back from this ticket after min/max optimization.",
+      "user": {
+        "login": "mkleen",
+        "name": "mkleen",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/338234?v=4",
+        "id": 338234
+      },
+      "id": 5890220413,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">I am going to step back from this ticket after min/max optimization.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5890222592",
+      "body": "untake",
+      "user": {
+        "login": "mkleen",
+        "name": "mkleen",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/338234?v=4",
+        "id": 338234
+      },
+      "id": 5890222592,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">untake</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5897078569",
+      "body": "@adriangb WDYT does it make sense to split the remaining optimizations into separate issues?  \n\n- `sum(DISTINCT x)`\n- `avg(DISTINCT x)`\n- `count(DISTINCT x)`",
+      "user": {
+        "login": "mkleen",
+        "name": "mkleen",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/338234?v=4",
+        "id": 338234
+      },
+      "id": 5897078569,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/adriangb/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/adriangb\">@adriangb</a> WDYT does it make sense to split the remaining optimizations into separate issues?</p>\n<ul dir=\"auto\">\n<li><code class=\"notranslate\">sum(DISTINCT x)</code></li>\n<li><code class=\"notranslate\">avg(DISTINCT x)</code></li>\n<li><code class=\"notranslate\">count(DISTINCT x)</code></li>\n</ul>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/24929#issuecomment-5898193489",
+      "body": "yep, that sounds good. If you open the new ones, I will close this one.",
+      "user": {
+        "login": "adriangb",
+        "name": "adriangb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/1755071?v=4",
+        "id": 1755071
+      },
+      "id": 5898193489,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">yep, that sounds good. If you open the new ones, I will close this one.</p>"
+    }
+  ]
+}

@@ -1,0 +1,418 @@
+{
+  "retrieved_at": "2026-10-29T19:05:17.857Z",
+  "pull_request": {
+    "url": "https://github.com/apache/datafusion/pull/20940",
+    "number": 20940,
+    "state": "closed",
+    "merged": false,
+    "mergeable": true,
+    "draft": false,
+    "body": "\r\n\r\n## Which issue does this PR close?\r\n\r\n- Closes #20942\r\n\r\n## Rationale for this change\r\nSpeedup / use less memory for  multiple`COUNT(distinct)`s.\r\n\r\n```\r\n│ QQuery 0 │        807.05 / 817.89 ±8.20 / 832.09 ms │       531.43 / 546.87 ±11.66 / 566.48 ms │ +1.50x faster │\r\n│ QQuery 1 │        227.70 / 228.71 ±0.52 / 229.11 ms │        206.07 / 208.48 ±1.88 / 211.83 ms │ +1.10x faster │\r\n``` \r\n\r\n## What changes are included in this PR?\r\n\r\nAdd the `MultiDistinctToCrossJoin` with some tests, update plans.\r\n\r\n## Are these changes tested?\r\nNew and existing.\r\n## Are there any user-facing changes?\r\n\r\n\r\nNote: I used Claude to generate the code, I reviewed the code myself.",
+    "title": "Add MultiDistinctToCrossJoin optimizer rule for parallel distinct aggregates",
+    "base": "main",
+    "base_sha": "5e54b89b8da17e76b7023fbaeca5abafeeb2d94e",
+    "head": "multi-distinct-to-union",
+    "head_sha": "64582912d85b6419efde4973bf6dc8c9aa2a3390",
+    "head_repo_id": 359341902,
+    "head_repo_full_name": "Dandandan/arrow-datafusion",
+    "merge_commit_sha": "5f02c9531d418b7c8a5354537543ea251a14cccc",
+    "user": {
+      "login": "Dandandan",
+      "name": "Dandandan",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+      "id": 163737
+    },
+    "requested_reviewers": null,
+    "requested_team_reviewers": null,
+    "diff": "@@ -59,6 +59,7 @@ pub mod eliminate_outer_join;\n pub mod extract_equijoin_predicate;\n pub mod extract_leaf_expressions;\n pub mod filter_null_join_keys;\n+pub mod multi_distinct_to_cross_join;\n pub mod optimize_projections;\n pub mod optimize_unions;\n pub mod optimizer;\n@@ -0,0 +1,229 @@\n+// Licensed to the Apache Software Foundation (ASF) under one\n+// or more contributor license agreements.  See the NOTICE file\n+// distributed with this work for additional information\n+// regarding copyright ownership.  The ASF licenses this file\n+// to you under the Apache License, Version 2.0 (the\n+// \"License\"); you may not use this file except in compliance\n+// with the License.  You may obtain a copy of the License at\n+//\n+//   http://www.apache.org/licenses/LICENSE-2.0\n+//\n+// Unless required by applicable law or agreed to in writing,\n+// software distributed under the License is distributed on an\n+// \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n+// KIND, either express or implied.  See the License for the\n+// specific language governing permissions and limitations\n+// under the License.\n+\n+//! [`MultiDistinctToCrossJoin`] splits multiple distinct aggregates on\n+//! different columns into separate aggregates joined by a cross join,\n+//! improving memory locality by executing each distinct aggregate sequentially.\n+\n+use std::sync::Arc;\n+\n+use crate::optimizer::ApplyOrder;\n+use crate::{OptimizerConfig, OptimizerRule};\n+\n+use datafusion_common::tree_node::Transformed;\n+use datafusion_common::{HashSet, Result};\n+use datafusion_expr::expr::AggregateFunctionParams;\n+use datafusion_expr::expr_fn::ident;\n+use datafusion_expr::{\n+    Expr, LogicalPlanBuilder,\n+    expr::AggregateFunction,\n+    logical_plan::{Aggregate, LogicalPlan},\n+};\n+\n+/// Optimizer rule that rewrites queries with multiple distinct aggregates on\n+/// different columns (without GROUP BY) into a cross join of individual\n+/// aggregates. Each aggregate runs sequentially to completion, improving\n+/// memory locality since only one hash table is live at a time.\n+///\n+/// ```text\n+/// Before:\n+///   SELECT COUNT(DISTINCT a), COUNT(DISTINCT b) FROM t\n+///\n+/// After:\n+///   SELECT count(DISTINCT a), count(DISTINCT b)\n+///   FROM (SELECT COUNT(DISTINCT a) FROM t)\n+///   CROSS JOIN (SELECT COUNT(DISTINCT b) FROM t)\n+/// ```\n+#[derive(Default, Debug)]\n+pub struct MultiDistinctToCrossJoin {}\n+\n+impl MultiDistinctToCrossJoin {\n+    #[expect(missing_docs)]\n+    pub fn new() -> Self {\n+        Self {}\n+    }\n+}\n+\n+/// Returns true if all aggregate expressions are distinct aggregates on\n+/// different fields, with no filters or order_by, and no GROUP BY.\n+fn is_multi_distinct_agg(group_expr: &[Expr], aggr_expr: &[Expr]) -> bool {\n+    // Must have no GROUP BY and at least 2 aggregates\n+    if !group_expr.is_empty() || aggr_expr.len() < 2 {\n+        return false;\n+    }\n+\n+    let mut fields_set = HashSet::new();\n+    for expr in aggr_expr {\n+        if let Expr::AggregateFunction(AggregateFunction {\n+            params:\n+                AggregateFunctionParams {\n+                    distinct,\n+                    args,\n+                    filter,\n+                    order_by,\n+                    null_treatment: _,\n+                },\n+            ..\n+        }) = expr\n+        {\n+            // Must be distinct, no filter, no order_by, single arg\n+            if !distinct || filter.is_some() || !order_by.is_empty() || args.len() != 1 {\n+                return false;\n+            }\n+            // Each distinct aggregate must be on a different field\n+            if !fields_set.insert(&args[0]) {\n+                return false;\n+            }\n+        } else {\n+            return false;\n+        }\n+    }\n+\n+    true\n+}\n+\n+impl OptimizerRule for MultiDistinctToCrossJoin {\n+    fn name(&self) -> &str {\n+        \"multi_distinct_to_cross_join\"\n+    }\n+\n+    fn apply_order(&self) -> Option<ApplyOrder> {\n+        Some(ApplyOrder::TopDown)\n+    }\n+\n+    fn supports_rewrite(&self) -> bool {\n+        true\n+    }\n+\n+    fn rewrite(\n+        &self,\n+        plan: LogicalPlan,\n+        _config: &dyn OptimizerConfig,\n+    ) -> Result<Transformed<LogicalPlan>> {\n+        let LogicalPlan::Aggregate(Aggregate {\n+            input,\n+            aggr_expr,\n+            schema,\n+            group_expr,\n+            ..\n+        }) = plan\n+        else {\n+            return Ok(Transformed::no(plan));\n+        };\n+\n+        if !is_multi_distinct_agg(&group_expr, &aggr_expr) {\n+            return Ok(Transformed::no(LogicalPlan::Aggregate(\n+                Aggregate::try_new_with_schema(input, group_expr, aggr_expr, schema)?,\n+            )));\n+        }\n+\n+        // Build individual aggregates and cross join them.\n+        // Use into_iter to avoid cloning each Expr.\n+        let n = aggr_expr.len();\n+        let mut builder: Option<LogicalPlanBuilder> = None;\n+        let mut projection_exprs = Vec::with_capacity(n);\n+\n+        for (idx, expr) in aggr_expr.into_iter().enumerate() {\n+            let single_agg = LogicalPlan::Aggregate(Aggregate::try_new(\n+                Arc::clone(&input),\n+                vec![],\n+                vec![expr],\n+            )?);\n+\n+            // Reference the single output column by name\n+            let agg_col = ident(single_agg.schema().field(0).name());\n+\n+            // Alias to preserve original schema names\n+            let (qualifier, original_field) = schema.qualified_field(idx);\n+            projection_exprs\n+                .push(agg_col.alias_qualified(qualifier.cloned(), original_field.name()));\n+\n+            builder = Some(match builder {\n+                None => LogicalPlanBuilder::from(single_agg),\n+                Some(b) => b.cross_join(single_agg)?,\n+            });\n+        }\n+\n+        let result = builder.unwrap().project(projection_exprs)?.build()?;\n+\n+        Ok(Transformed::yes(result))\n+    }\n+}\n+\n+#[cfg(test)]\n+mod tests {\n+    use super::*;\n+    use crate::assert_optimized_plan_eq_display_indent_snapshot;\n+    use crate::test::*;\n+    use datafusion_expr::{col, logical_plan::builder::LogicalPlanBuilder};\n+    use datafusion_functions_aggregate::expr_fn::count_distinct;\n+    use datafusion_functions_aggregate::sum::sum_distinct;\n+\n+    #[test]\n+    fn multi_distinct_count_two_cols() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                Vec::<Expr>::new(),\n+                vec![count_distinct(col(\"a\")), count_distinct(col(\"b\"))],\n+            )?\n+            .build()?;\n+\n+        let rule: Arc<dyn OptimizerRule + Send + Sync> =\n+            Arc::new(MultiDistinctToCrossJoin::new());\n+        assert_optimized_plan_eq_display_indent_snapshot!(\n+            rule,\n+            plan,\n+            @ r\"\n+        Projection: count(DISTINCT test.a) AS count(DISTINCT test.a), count(DISTINCT test.b) AS count(DISTINCT test.b) [count(DISTINCT test.a):Int64, count(DISTINCT test.b):Int64]\n+          Cross Join: [count(DISTINCT test.a):Int64, count(DISTINCT test.b):Int64]\n+            Aggregate: groupBy=[[]], aggr=[[count(DISTINCT test.a)]] [count(DISTINCT test.a):Int64]\n+              TableScan: test [a:UInt32, b:UInt32, c:UInt32]\n+            Aggregate: groupBy=[[]], aggr=[[count(DISTINCT test.b)]] [count(DISTINCT test.b):Int64]\n+              TableScan: test [a:UInt32, b:UInt32, c:UInt32]\n+        \"\n+        )\n+    }\n+\n+    #[test]\n+    fn multi_distinct_mixed_agg_types() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                Vec::<Expr>::new(),\n+                vec![count_distinct(col(\"a\")), sum_distinct(col(\"b\"))],\n+            )?\n+            .build()?;\n+\n+        let rule: Arc<dyn OptimizerRule + Send + Sync> =\n+            Arc::new(MultiDistinctToCrossJoin::new());\n+        assert_optimized_plan_eq_display_indent_snapshot!(\n+            rule,\n+            plan,\n+            @ r\"\n+        Projection: count(DISTINCT test.a) AS count(DISTINCT test.a), sum(DISTINCT test.b) AS sum(DISTINCT test.b) [count(DISTINCT test.a):Int64, sum(DISTINCT test.b):UInt64;N]\n+          Cross Join: [count(DISTINCT test.a):Int64, sum(DISTINCT test.b):UInt64;N]\n+            Aggregate: groupBy=[[]], aggr=[[count(DISTINCT test.a)]] [count(DISTINCT test.a):Int64]\n+              TableScan: test [a:UInt32, b:UInt32, c:UInt32]\n+            Aggregate: groupBy=[[]], aggr=[[sum(DISTINCT test.b)]] [sum(DISTINCT test.b):UInt64;N]\n+              TableScan: test [a:UInt32, b:UInt32, c:UInt32]\n+        \"\n+        )\n+    }\n+}\n@@ -45,6 +45,7 @@ use crate::eliminate_outer_join::EliminateOuterJoin;\n use crate::extract_equijoin_predicate::ExtractEquijoinPredicate;\n use crate::extract_leaf_expressions::{ExtractLeafExpressions, PushDownLeafProjections};\n use crate::filter_null_join_keys::FilterNullJoinKeys;\n+use crate::multi_distinct_to_cross_join::MultiDistinctToCrossJoin;\n use crate::optimize_projections::OptimizeProjections;\n use crate::optimize_unions::OptimizeUnions;\n use crate::plan_signature::LogicalPlanSignature;\n@@ -297,6 +298,7 @@ impl Optimizer {\n             // Filters can't be pushed down past Limits, we should do PushDownFilter after PushDownLimit\n             Arc::new(PushDownLimit::new()),\n             Arc::new(PushDownFilter::new()),\n+            Arc::new(MultiDistinctToCrossJoin::new()),\n             Arc::new(SingleDistinctToGroupBy::new()),\n             // The previous optimizations added expressions and projections,\n             // that might benefit from the following rules\n@@ -144,11 +144,33 @@ query TT\n EXPLAIN SELECT SUM(DISTINCT column1 + 1), SUM(DISTINCT column1 + 2) FROM sum_simplify_t;\n ----\n logical_plan\n-01)Aggregate: groupBy=[[]], aggr=[[sum(DISTINCT sum_simplify_t.column1 + Int64(1)), sum(DISTINCT sum_simplify_t.column1 + Int64(2))]]\n-02)--TableScan: sum_simplify_t projection=[column1]\n+01)Cross Join:\n+02)--Projection: sum(alias1) AS sum(DISTINCT sum_simplify_t.column1 + Int64(1))\n+03)----Aggregate: groupBy=[[]], aggr=[[sum(alias1)]]\n+04)------Aggregate: groupBy=[[sum_simplify_t.column1 + Int64(1) AS alias1]], aggr=[[]]\n+05)--------TableScan: sum_simplify_t projection=[column1]\n+06)--Projection: sum(alias1) AS sum(DISTINCT sum_simplify_t.column1 + Int64(2))\n+07)----Aggregate: groupBy=[[]], aggr=[[sum(alias1)]]\n+08)------Aggregate: groupBy=[[sum_simplify_t.column1 + Int64(2) AS alias1]], aggr=[[]]\n+09)--------TableScan: sum_simplify_t projection=[column1]\n physical_plan\n-01)AggregateExec: mode=Single, gby=[], aggr=[sum(DISTINCT sum_simplify_t.column1 + Int64(1)), sum(DISTINCT sum_simplify_t.column1 + Int64(2))]\n-02)--DataSourceExec: partitions=1, partition_sizes=[1]\n+01)CrossJoinExec\n+02)--ProjectionExec: expr=[sum(alias1)@0 as sum(DISTINCT sum_simplify_t.column1 + Int64(1))]\n+03)----AggregateExec: mode=Final, gby=[], aggr=[sum(alias1)]\n+04)------CoalescePartitionsExec\n+05)--------AggregateExec: mode=Partial, gby=[], aggr=[sum(alias1)]\n+06)----------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+07)------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+08)--------------AggregateExec: mode=Partial, gby=[column1@0 + 1 as alias1], aggr=[]\n+09)----------------DataSourceExec: partitions=1, partition_sizes=[1]\n+10)--ProjectionExec: expr=[sum(alias1)@0 as sum(DISTINCT sum_simplify_t.column1 + Int64(2))]\n+11)----AggregateExec: mode=Final, gby=[], aggr=[sum(alias1)]\n+12)------CoalescePartitionsExec\n+13)--------AggregateExec: mode=Partial, gby=[], aggr=[sum(alias1)]\n+14)----------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+15)------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+16)--------------AggregateExec: mode=Partial, gby=[column1@0 + 2 as alias1], aggr=[]\n+17)----------------DataSourceExec: partitions=1, partition_sizes=[1]\n \n # DISTINCT and non-DISTINCT aggregates\n query II\n@@ -1183,12 +1183,51 @@ query TT\n EXPLAIN SELECT COUNT(DISTINCT \"SearchPhrase\"), COUNT(DISTINCT \"MobilePhone\"), COUNT(DISTINCT \"MobilePhoneModel\") FROM hits;\n ----\n logical_plan\n-01)Aggregate: groupBy=[[]], aggr=[[count(DISTINCT hits.SearchPhrase), count(DISTINCT hits.MobilePhone), count(DISTINCT hits.MobilePhoneModel)]]\n-02)--SubqueryAlias: hits\n-03)----TableScan: hits_raw projection=[MobilePhone, MobilePhoneModel, SearchPhrase]\n+01)Cross Join:\n+02)--Cross Join:\n+03)----Projection: count(alias1) AS count(DISTINCT hits.SearchPhrase)\n+04)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+05)--------Aggregate: groupBy=[[hits.SearchPhrase AS alias1]], aggr=[[]]\n+06)----------SubqueryAlias: hits\n+07)------------TableScan: hits_raw projection=[SearchPhrase]\n+08)----Projection: count(alias1) AS count(DISTINCT hits.MobilePhone)\n+09)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+10)--------Aggregate: groupBy=[[hits.MobilePhone AS alias1]], aggr=[[]]\n+11)----------SubqueryAlias: hits\n+12)------------TableScan: hits_raw projection=[MobilePhone]\n+13)--Projection: count(alias1) AS count(DISTINCT hits.MobilePhoneModel)\n+14)----Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+15)------Aggregate: groupBy=[[hits.MobilePhoneModel AS alias1]], aggr=[[]]\n+16)--------SubqueryAlias: hits\n+17)----------TableScan: hits_raw projection=[MobilePhoneModel]\n physical_plan\n-01)AggregateExec: mode=Single, gby=[], aggr=[count(DISTINCT hits.SearchPhrase), count(DISTINCT hits.MobilePhone), count(DISTINCT hits.MobilePhoneModel)]\n-02)--DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[MobilePhone, MobilePhoneModel, SearchPhrase], file_type=parquet\n+01)ProjectionExec: expr=[count(DISTINCT hits.SearchPhrase)@1 as count(DISTINCT hits.SearchPhrase), count(DISTINCT hits.MobilePhone)@2 as count(DISTINCT hits.MobilePhone), count(DISTINCT hits.MobilePhoneModel)@0 as count(DISTINCT hits.MobilePhoneModel)]\n+02)--CrossJoinExec\n+03)----ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.MobilePhoneModel)]\n+04)------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+05)--------CoalescePartitionsExec\n+06)----------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+07)------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+08)--------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+09)----------------AggregateExec: mode=Partial, gby=[MobilePhoneModel@0 as alias1], aggr=[]\n+10)------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[MobilePhoneModel], file_type=parquet\n+11)----CrossJoinExec\n+12)------ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.SearchPhrase)]\n+13)--------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+14)----------CoalescePartitionsExec\n+15)------------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+16)--------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+17)----------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+18)------------------AggregateExec: mode=Partial, gby=[SearchPhrase@0 as alias1], aggr=[]\n+19)--------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[SearchPhrase], file_type=parquet\n+20)------ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.MobilePhone)]\n+21)--------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+22)----------CoalescePartitionsExec\n+23)------------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+24)--------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+25)----------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+26)------------------AggregateExec: mode=Partial, gby=[MobilePhone@0 as alias1], aggr=[]\n+27)--------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[MobilePhone], file_type=parquet\n \n query III\n SELECT COUNT(DISTINCT \"SearchPhrase\"), COUNT(DISTINCT \"MobilePhone\"), COUNT(DISTINCT \"MobilePhoneModel\") FROM hits;\n@@ -1199,12 +1238,51 @@ query TT\n EXPLAIN SELECT COUNT(DISTINCT \"HitColor\"), COUNT(DISTINCT \"BrowserCountry\"), COUNT(DISTINCT \"BrowserLanguage\")  FROM hits;\n ----\n logical_plan\n-01)Aggregate: groupBy=[[]], aggr=[[count(DISTINCT hits.HitColor), count(DISTINCT hits.BrowserCountry), count(DISTINCT hits.BrowserLanguage)]]\n-02)--SubqueryAlias: hits\n-03)----TableScan: hits_raw projection=[HitColor, BrowserLanguage, BrowserCountry]\n+01)Cross Join:\n+02)--Cross Join:\n+03)----Projection: count(alias1) AS count(DISTINCT hits.HitColor)\n+04)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+05)--------Aggregate: groupBy=[[hits.HitColor AS alias1]], aggr=[[]]\n+06)----------SubqueryAlias: hits\n+07)------------TableScan: hits_raw projection=[HitColor]\n+08)----Projection: count(alias1) AS count(DISTINCT hits.BrowserCountry)\n+09)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+10)--------Aggregate: groupBy=[[hits.BrowserCountry AS alias1]], aggr=[[]]\n+11)----------SubqueryAlias: hits\n+12)------------TableScan: hits_raw projection=[BrowserCountry]\n+13)--Projection: count(alias1) AS count(DISTINCT hits.BrowserLanguage)\n+14)----Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+15)------Aggregate: groupBy=[[hits.BrowserLanguage AS alias1]], aggr=[[]]\n+16)--------SubqueryAlias: hits\n+17)----------TableScan: hits_raw projection=[BrowserLanguage]\n physical_plan\n-01)ProjectionExec: expr=[1 as count(DISTINCT hits.HitColor), 1 as count(DISTINCT hits.BrowserCountry), 1 as count(DISTINCT hits.BrowserLanguage)]\n-02)--PlaceholderRowExec\n+01)ProjectionExec: expr=[count(DISTINCT hits.HitColor)@1 as count(DISTINCT hits.HitColor), count(DISTINCT hits.BrowserCountry)@2 as count(DISTINCT hits.BrowserCountry), count(DISTINCT hits.BrowserLanguage)@0 as count(DISTINCT hits.BrowserLanguage)]\n+02)--CrossJoinExec\n+03)----ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.BrowserLanguage)]\n+04)------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+05)--------CoalescePartitionsExec\n+06)----------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+07)------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+08)--------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+09)----------------AggregateExec: mode=Partial, gby=[BrowserLanguage@0 as alias1], aggr=[]\n+10)------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[BrowserLanguage], file_type=parquet\n+11)----CrossJoinExec\n+12)------ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.HitColor)]\n+13)--------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+14)----------CoalescePartitionsExec\n+15)------------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+16)--------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+17)----------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+18)------------------AggregateExec: mode=Partial, gby=[HitColor@0 as alias1], aggr=[]\n+19)--------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[HitColor], file_type=parquet\n+20)------ProjectionExec: expr=[count(alias1)@0 as count(DISTINCT hits.BrowserCountry)]\n+21)--------AggregateExec: mode=Final, gby=[], aggr=[count(alias1)]\n+22)----------CoalescePartitionsExec\n+23)------------AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)]\n+24)--------------AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[]\n+25)----------------RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=1\n+26)------------------AggregateExec: mode=Partial, gby=[BrowserCountry@0 as alias1], aggr=[]\n+27)--------------------DataSourceExec: file_groups={1 group: [[WORKSPACE_ROOT/datafusion/core/tests/data/clickbench_hits_10.parquet]]}, projection=[BrowserCountry], file_type=parquet\n \n query III\n SELECT COUNT(DISTINCT \"HitColor\"), COUNT(DISTINCT \"BrowserCountry\"), COUNT(DISTINCT \"BrowserLanguage\")  FROM hits;\n@@ -194,6 +194,7 @@ logical_plan after filter_null_join_keys SAME TEXT AS ABOVE\n logical_plan after eliminate_outer_join SAME TEXT AS ABOVE\n logical_plan after push_down_limit SAME TEXT AS ABOVE\n logical_plan after push_down_filter SAME TEXT AS ABOVE\n+logical_plan after multi_distinct_to_cross_join SAME TEXT AS ABOVE\n logical_plan after single_distinct_aggregation_to_group_by SAME TEXT AS ABOVE\n logical_plan after eliminate_group_by_constant SAME TEXT AS ABOVE\n logical_plan after common_sub_expression_eliminate SAME TEXT AS ABOVE\n@@ -218,6 +219,7 @@ logical_plan after filter_null_join_keys SAME TEXT AS ABOVE\n logical_plan after eliminate_outer_join SAME TEXT AS ABOVE\n logical_plan after push_down_limit SAME TEXT AS ABOVE\n logical_plan after push_down_filter SAME TEXT AS ABOVE\n+logical_plan after multi_distinct_to_cross_join SAME TEXT AS ABOVE\n logical_plan after single_distinct_aggregation_to_group_by SAME TEXT AS ABOVE\n logical_plan after eliminate_group_by_constant SAME TEXT AS ABOVE\n logical_plan after common_sub_expression_eliminate SAME TEXT AS ABOVE\n@@ -565,6 +567,7 @@ logical_plan after filter_null_join_keys SAME TEXT AS ABOVE\n logical_plan after eliminate_outer_join SAME TEXT AS ABOVE\n logical_plan after push_down_limit SAME TEXT AS ABOVE\n logical_plan after push_down_filter SAME TEXT AS ABOVE\n+logical_plan after multi_distinct_to_cross_join SAME TEXT AS ABOVE\n logical_plan after single_distinct_aggregation_to_group_by SAME TEXT AS ABOVE\n logical_plan after eliminate_group_by_constant SAME TEXT AS ABOVE\n logical_plan after common_sub_expression_eliminate SAME TEXT AS ABOVE\n@@ -589,6 +592,7 @@ logical_plan after filter_null_join_keys SAME TEXT AS ABOVE\n logical_plan after eliminate_outer_join SAME TEXT AS ABOVE\n logical_plan after push_down_limit SAME TEXT AS ABOVE\n logical_plan after push_down_filter SAME TEXT AS ABOVE\n+logical_plan after multi_distinct_to_cross_join SAME TEXT AS ABOVE\n logical_plan after single_distinct_aggregation_to_group_by SAME TEXT AS ABOVE\n logical_plan after eliminate_group_by_constant SAME TEXT AS ABOVE\n logical_plan after common_sub_expression_eliminate SAME TEXT AS ABOVE\n@@ -283,8 +283,20 @@ EXPLAIN SELECT\n FROM test;\n ----\n logical_plan\n-01)Aggregate: groupBy=[[]], aggr=[[count(DISTINCT test.column1_utf8), count(DISTINCT test.column1_utf8view), count(DISTINCT test.column1_dict)]]\n-02)--TableScan: test projection=[column1_utf8, column1_utf8view, column1_dict]\n+01)Cross Join:\n+02)--Cross Join:\n+03)----Projection: count(alias1) AS count(DISTINCT test.column1_utf8)\n+04)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+05)--------Aggregate: groupBy=[[test.column1_utf8 AS alias1]], aggr=[[]]\n+06)----------TableScan: test projection=[column1_utf8]\n+07)----Projection: count(alias1) AS count(DISTINCT test.column1_utf8view)\n+08)------Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+09)--------Aggregate: groupBy=[[test.column1_utf8view AS alias1]], aggr=[[]]\n+10)----------TableScan: test projection=[column1_utf8view]\n+11)--Projection: count(alias1) AS count(DISTINCT test.column1_dict)\n+12)----Aggregate: groupBy=[[]], aggr=[[count(alias1)]]\n+13)------Aggregate: groupBy=[[test.column1_dict AS alias1]], aggr=[[]]\n+14)--------TableScan: test projection=[column1_dict]\n \n \n ### `STARTS_WITH`",
+    "comments": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897",
+        "body": "run benchmark clickbench_extended",
+        "user": {
+          "login": "Dandandan",
+          "name": "Dandandan",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+          "id": 163737
+        },
+        "id": 4059947897,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T07:46:34Z",
+        "updated_at": "2026-03-14T07:46:34Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">run benchmark clickbench_extended</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059954171",
+        "body": "🤖 Benchmark running (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897)\n`Linux bench-c4059947897-230-zrd9d 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux`\nComparing multi-distinct-to-union (f03018e992317c3a59a1d1d6ac7b5b881ecdad35) to 9c3c01a (merge-base) [diff](https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..f03018e992317c3a59a1d1d6ac7b5b881ecdad35) using: clickbench_extended\nResults will be posted here when complete",
+        "user": {
+          "login": "adriangbot",
+          "name": "adriangbot",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+          "id": 267740845
+        },
+        "id": 4059954171,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T07:49:49Z",
+        "updated_at": "2026-03-14T07:49:49Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">🤖 Benchmark running (GKE) | <a href=\"https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\">trigger</a><br>\n<code class=\"notranslate\">Linux bench-c4059947897-230-zrd9d 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux</code><br>\nComparing multi-distinct-to-union (<a class=\"commit-link\" data-hovercard-type=\"commit\" data-hovercard-url=\"https://github.com/apache/datafusion/commit/f03018e992317c3a59a1d1d6ac7b5b881ecdad35/hovercard\" href=\"https://github.com/apache/datafusion/commit/f03018e992317c3a59a1d1d6ac7b5b881ecdad35\"><tt>f03018e</tt></a>) to <a class=\"commit-link\" data-hovercard-type=\"commit\" data-hovercard-url=\"https://github.com/apache/datafusion/commit/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7/hovercard\" href=\"https://github.com/apache/datafusion/commit/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7\"><tt>9c3c01a</tt></a> (merge-base) <a href=\"https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..f03018e992317c3a59a1d1d6ac7b5b881ecdad35\">diff</a> using: clickbench_extended<br>\nResults will be posted here when complete</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059987594",
+        "body": "🤖 Benchmark completed (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897)\n\n<details><summary>Details</summary>\n<p>\n\n```\nComparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                    HEAD ┃                   multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │      868.72 / 883.32 ±15.10 / 910.39 ms │        529.35 / 558.48 ±21.42 / 592.18 ms │ +1.58x faster │\n│ QQuery 1 │       228.13 / 229.39 ±1.30 / 231.56 ms │         204.65 / 208.60 ±2.30 / 210.71 ms │ +1.10x faster │\n│ QQuery 2 │       534.63 / 535.33 ±0.48 / 536.14 ms │         529.52 / 533.14 ±3.00 / 536.94 ms │     no change │\n│ QQuery 3 │       332.54 / 333.57 ±0.78 / 334.61 ms │         335.89 / 338.00 ±2.63 / 343.17 ms │     no change │\n│ QQuery 4 │      671.13 / 691.89 ±12.82 / 703.04 ms │        690.63 / 710.50 ±14.61 / 727.56 ms │     no change │\n│ QQuery 5 │ 9666.38 / 9914.13 ±142.81 / 10111.98 ms │ 10029.90 / 10119.15 ±135.48 / 10387.78 ms │     no change │\n│ QQuery 6 │   1003.30 / 1010.08 ±10.25 / 1030.40 ms │      994.45 / 1010.25 ±12.36 / 1031.13 ms │     no change │\n│ QQuery 7 │      791.30 / 814.39 ±14.18 / 831.49 ms │       827.78 / 880.70 ±76.41 / 1030.16 ms │  1.08x slower │\n└──────────┴─────────────────────────────────────────┴───────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14412.11ms │\n│ Total Time (multi-distinct-to-union)   │ 14358.81ms │\n│ Average Time (HEAD)                    │  1801.51ms │\n│ Average Time (multi-distinct-to-union) │  1794.85ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          1 │\n│ Queries with No Change                 │          5 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n```\n\n</p>\n</details>\n\n<details><summary>Resource Usage</summary>\n\n**clickbench_extended — base (merge-base)**\n| Metric | Value |\n|--------|-------|\n| Wall time | 72.7s |\n| Peak memory | 33.2 GiB |\n| Avg memory | 28.3 GiB |\n| CPU user | 719.6s |\n| CPU sys | 24.1s |\n| Disk read | 0 B |\n| Disk write | 22.5 MiB |\n\n**clickbench_extended — branch**\n| Metric | Value |\n|--------|-------|\n| Wall time | 72.5s |\n| Peak memory | 34.2 GiB |\n| Avg memory | 27.5 GiB |\n| CPU user | 726.3s |\n| CPU sys | 29.0s |\n| Disk read | 0 B |\n| Disk write | 708.0 KiB |\n\n</details>\n",
+        "user": {
+          "login": "adriangbot",
+          "name": "adriangbot",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+          "id": 267740845
+        },
+        "id": 4059987594,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T08:10:42Z",
+        "updated_at": "2026-03-14T08:10:42Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">🤖 Benchmark completed (GKE) | <a href=\"https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\">trigger</a></p>\n<details><summary>Details</summary>\n<p dir=\"auto\">\n</p><div class=\"snippet-clipboard-content notranslate position-relative overflow-auto\" data-snippet-clipboard-copy-content=\"Comparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                    HEAD ┃                   multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │      868.72 / 883.32 ±15.10 / 910.39 ms │        529.35 / 558.48 ±21.42 / 592.18 ms │ +1.58x faster │\n│ QQuery 1 │       228.13 / 229.39 ±1.30 / 231.56 ms │         204.65 / 208.60 ±2.30 / 210.71 ms │ +1.10x faster │\n│ QQuery 2 │       534.63 / 535.33 ±0.48 / 536.14 ms │         529.52 / 533.14 ±3.00 / 536.94 ms │     no change │\n│ QQuery 3 │       332.54 / 333.57 ±0.78 / 334.61 ms │         335.89 / 338.00 ±2.63 / 343.17 ms │     no change │\n│ QQuery 4 │      671.13 / 691.89 ±12.82 / 703.04 ms │        690.63 / 710.50 ±14.61 / 727.56 ms │     no change │\n│ QQuery 5 │ 9666.38 / 9914.13 ±142.81 / 10111.98 ms │ 10029.90 / 10119.15 ±135.48 / 10387.78 ms │     no change │\n│ QQuery 6 │   1003.30 / 1010.08 ±10.25 / 1030.40 ms │      994.45 / 1010.25 ±12.36 / 1031.13 ms │     no change │\n│ QQuery 7 │      791.30 / 814.39 ±14.18 / 831.49 ms │       827.78 / 880.70 ±76.41 / 1030.16 ms │  1.08x slower │\n└──────────┴─────────────────────────────────────────┴───────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14412.11ms │\n│ Total Time (multi-distinct-to-union)   │ 14358.81ms │\n│ Average Time (HEAD)                    │  1801.51ms │\n│ Average Time (multi-distinct-to-union) │  1794.85ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          1 │\n│ Queries with No Change                 │          5 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\"><pre class=\"notranslate\"><code class=\"notranslate\">Comparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                    HEAD ┃                   multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │      868.72 / 883.32 ±15.10 / 910.39 ms │        529.35 / 558.48 ±21.42 / 592.18 ms │ +1.58x faster │\n│ QQuery 1 │       228.13 / 229.39 ±1.30 / 231.56 ms │         204.65 / 208.60 ±2.30 / 210.71 ms │ +1.10x faster │\n│ QQuery 2 │       534.63 / 535.33 ±0.48 / 536.14 ms │         529.52 / 533.14 ±3.00 / 536.94 ms │     no change │\n│ QQuery 3 │       332.54 / 333.57 ±0.78 / 334.61 ms │         335.89 / 338.00 ±2.63 / 343.17 ms │     no change │\n│ QQuery 4 │      671.13 / 691.89 ±12.82 / 703.04 ms │        690.63 / 710.50 ±14.61 / 727.56 ms │     no change │\n│ QQuery 5 │ 9666.38 / 9914.13 ±142.81 / 10111.98 ms │ 10029.90 / 10119.15 ±135.48 / 10387.78 ms │     no change │\n│ QQuery 6 │   1003.30 / 1010.08 ±10.25 / 1030.40 ms │      994.45 / 1010.25 ±12.36 / 1031.13 ms │     no change │\n│ QQuery 7 │      791.30 / 814.39 ±14.18 / 831.49 ms │       827.78 / 880.70 ±76.41 / 1030.16 ms │  1.08x slower │\n└──────────┴─────────────────────────────────────────┴───────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14412.11ms │\n│ Total Time (multi-distinct-to-union)   │ 14358.81ms │\n│ Average Time (HEAD)                    │  1801.51ms │\n│ Average Time (multi-distinct-to-union) │  1794.85ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          1 │\n│ Queries with No Change                 │          5 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n</code></pre></div>\n<p dir=\"auto\"></p>\n</details>\n<details><summary>Resource Usage</summary>\n<p dir=\"auto\"><strong>clickbench_extended — base (merge-base)</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Metric</th>\n<th>Value</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Wall time</td>\n<td>72.7s</td>\n</tr>\n<tr>\n<td>Peak memory</td>\n<td>33.2 GiB</td>\n</tr>\n<tr>\n<td>Avg memory</td>\n<td>28.3 GiB</td>\n</tr>\n<tr>\n<td>CPU user</td>\n<td>719.6s</td>\n</tr>\n<tr>\n<td>CPU sys</td>\n<td>24.1s</td>\n</tr>\n<tr>\n<td>Disk read</td>\n<td>0 B</td>\n</tr>\n<tr>\n<td>Disk write</td>\n<td>22.5 MiB</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\"><strong>clickbench_extended — branch</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Metric</th>\n<th>Value</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Wall time</td>\n<td>72.5s</td>\n</tr>\n<tr>\n<td>Peak memory</td>\n<td>34.2 GiB</td>\n</tr>\n<tr>\n<td>Avg memory</td>\n<td>27.5 GiB</td>\n</tr>\n<tr>\n<td>CPU user</td>\n<td>726.3s</td>\n</tr>\n<tr>\n<td>CPU sys</td>\n<td>29.0s</td>\n</tr>\n<tr>\n<td>Disk read</td>\n<td>0 B</td>\n</tr>\n<tr>\n<td>Disk write</td>\n<td>708.0 KiB</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n</details>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382",
+        "body": "\r\nrun benchmark clickbench_extended\r\n\r\n",
+        "user": {
+          "login": "Dandandan",
+          "name": "Dandandan",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+          "id": 163737
+        },
+        "id": 4060020382,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T08:26:10Z",
+        "updated_at": "2026-03-14T08:26:10Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">run benchmark clickbench_extended</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060024219",
+        "body": "🤖 Benchmark running (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382)\n`Linux bench-c4060020382-231-2jwlp 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux`\nComparing multi-distinct-to-union (4f23297711ec58a1ec650f3af70000979fde670a) to 9c3c01a (merge-base) [diff](https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..4f23297711ec58a1ec650f3af70000979fde670a) using: clickbench_extended\nResults will be posted here when complete",
+        "user": {
+          "login": "adriangbot",
+          "name": "adriangbot",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+          "id": 267740845
+        },
+        "id": 4060024219,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T08:28:55Z",
+        "updated_at": "2026-03-14T08:28:55Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">🤖 Benchmark running (GKE) | <a href=\"https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\">trigger</a><br>\n<code class=\"notranslate\">Linux bench-c4060020382-231-2jwlp 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux</code><br>\nComparing multi-distinct-to-union (<a class=\"commit-link\" data-hovercard-type=\"commit\" data-hovercard-url=\"https://github.com/apache/datafusion/commit/4f23297711ec58a1ec650f3af70000979fde670a/hovercard\" href=\"https://github.com/apache/datafusion/commit/4f23297711ec58a1ec650f3af70000979fde670a\"><tt>4f23297</tt></a>) to <a class=\"commit-link\" data-hovercard-type=\"commit\" data-hovercard-url=\"https://github.com/apache/datafusion/commit/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7/hovercard\" href=\"https://github.com/apache/datafusion/commit/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7\"><tt>9c3c01a</tt></a> (merge-base) <a href=\"https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..4f23297711ec58a1ec650f3af70000979fde670a\">diff</a> using: clickbench_extended<br>\nResults will be posted here when complete</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060078596",
+        "body": "🤖 Benchmark completed (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382)\n\n<details><summary>Details</summary>\n<p>\n\n```\nComparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                     HEAD ┃                  multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │        807.05 / 817.89 ±8.20 / 832.09 ms │       531.43 / 546.87 ±11.66 / 566.48 ms │ +1.50x faster │\n│ QQuery 1 │        227.70 / 228.71 ±0.52 / 229.11 ms │        206.07 / 208.48 ±1.88 / 211.83 ms │ +1.10x faster │\n│ QQuery 2 │        535.00 / 538.15 ±2.28 / 541.01 ms │        534.82 / 537.43 ±1.48 / 539.15 ms │     no change │\n│ QQuery 3 │        332.84 / 335.91 ±2.09 / 337.99 ms │        333.69 / 336.70 ±3.05 / 342.52 ms │     no change │\n│ QQuery 4 │        669.30 / 678.09 ±6.68 / 687.54 ms │        688.11 / 696.03 ±8.92 / 712.84 ms │     no change │\n│ QQuery 5 │ 9883.21 / 10062.74 ±202.87 / 10455.76 ms │ 9630.03 / 10016.96 ±200.87 / 10182.07 ms │     no change │\n│ QQuery 6 │     989.16 / 1012.00 ±11.69 / 1019.74 ms │      978.54 / 999.13 ±13.15 / 1013.69 ms │     no change │\n│ QQuery 7 │       790.67 / 818.91 ±28.07 / 853.39 ms │       796.78 / 818.32 ±17.57 / 847.16 ms │     no change │\n└──────────┴──────────────────────────────────────────┴──────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14492.40ms │\n│ Total Time (multi-distinct-to-union)   │ 14159.92ms │\n│ Average Time (HEAD)                    │  1811.55ms │\n│ Average Time (multi-distinct-to-union) │  1769.99ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          0 │\n│ Queries with No Change                 │          6 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n```\n\n</p>\n</details>\n\n<details><summary>Resource Usage</summary>\n\n**clickbench_extended — base (merge-base)**\n| Metric | Value |\n|--------|-------|\n| Wall time | 73.1s |\n| Peak memory | 32.5 GiB |\n| Avg memory | 28.3 GiB |\n| CPU user | 724.5s |\n| CPU sys | 23.0s |\n| Disk read | 0 B |\n| Disk write | 21.8 MiB |\n\n**clickbench_extended — branch**\n| Metric | Value |\n|--------|-------|\n| Wall time | 71.5s |\n| Peak memory | 34.5 GiB |\n| Avg memory | 29.3 GiB |\n| CPU user | 722.7s |\n| CPU sys | 25.0s |\n| Disk read | 0 B |\n| Disk write | 76.0 KiB |\n\n</details>\n",
+        "user": {
+          "login": "adriangbot",
+          "name": "adriangbot",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+          "id": 267740845
+        },
+        "id": 4060078596,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-14T08:47:02Z",
+        "updated_at": "2026-03-14T08:47:02Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">🤖 Benchmark completed (GKE) | <a href=\"https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\">trigger</a></p>\n<details><summary>Details</summary>\n<p dir=\"auto\">\n</p><div class=\"snippet-clipboard-content notranslate position-relative overflow-auto\" data-snippet-clipboard-copy-content=\"Comparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                     HEAD ┃                  multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │        807.05 / 817.89 ±8.20 / 832.09 ms │       531.43 / 546.87 ±11.66 / 566.48 ms │ +1.50x faster │\n│ QQuery 1 │        227.70 / 228.71 ±0.52 / 229.11 ms │        206.07 / 208.48 ±1.88 / 211.83 ms │ +1.10x faster │\n│ QQuery 2 │        535.00 / 538.15 ±2.28 / 541.01 ms │        534.82 / 537.43 ±1.48 / 539.15 ms │     no change │\n│ QQuery 3 │        332.84 / 335.91 ±2.09 / 337.99 ms │        333.69 / 336.70 ±3.05 / 342.52 ms │     no change │\n│ QQuery 4 │        669.30 / 678.09 ±6.68 / 687.54 ms │        688.11 / 696.03 ±8.92 / 712.84 ms │     no change │\n│ QQuery 5 │ 9883.21 / 10062.74 ±202.87 / 10455.76 ms │ 9630.03 / 10016.96 ±200.87 / 10182.07 ms │     no change │\n│ QQuery 6 │     989.16 / 1012.00 ±11.69 / 1019.74 ms │      978.54 / 999.13 ±13.15 / 1013.69 ms │     no change │\n│ QQuery 7 │       790.67 / 818.91 ±28.07 / 853.39 ms │       796.78 / 818.32 ±17.57 / 847.16 ms │     no change │\n└──────────┴──────────────────────────────────────────┴──────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14492.40ms │\n│ Total Time (multi-distinct-to-union)   │ 14159.92ms │\n│ Average Time (HEAD)                    │  1811.55ms │\n│ Average Time (multi-distinct-to-union) │  1769.99ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          0 │\n│ Queries with No Change                 │          6 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\"><pre class=\"notranslate\"><code class=\"notranslate\">Comparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                     HEAD ┃                  multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │        807.05 / 817.89 ±8.20 / 832.09 ms │       531.43 / 546.87 ±11.66 / 566.48 ms │ +1.50x faster │\n│ QQuery 1 │        227.70 / 228.71 ±0.52 / 229.11 ms │        206.07 / 208.48 ±1.88 / 211.83 ms │ +1.10x faster │\n│ QQuery 2 │        535.00 / 538.15 ±2.28 / 541.01 ms │        534.82 / 537.43 ±1.48 / 539.15 ms │     no change │\n│ QQuery 3 │        332.84 / 335.91 ±2.09 / 337.99 ms │        333.69 / 336.70 ±3.05 / 342.52 ms │     no change │\n│ QQuery 4 │        669.30 / 678.09 ±6.68 / 687.54 ms │        688.11 / 696.03 ±8.92 / 712.84 ms │     no change │\n│ QQuery 5 │ 9883.21 / 10062.74 ±202.87 / 10455.76 ms │ 9630.03 / 10016.96 ±200.87 / 10182.07 ms │     no change │\n│ QQuery 6 │     989.16 / 1012.00 ±11.69 / 1019.74 ms │      978.54 / 999.13 ±13.15 / 1013.69 ms │     no change │\n│ QQuery 7 │       790.67 / 818.91 ±28.07 / 853.39 ms │       796.78 / 818.32 ±17.57 / 847.16 ms │     no change │\n└──────────┴──────────────────────────────────────────┴──────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14492.40ms │\n│ Total Time (multi-distinct-to-union)   │ 14159.92ms │\n│ Average Time (HEAD)                    │  1811.55ms │\n│ Average Time (multi-distinct-to-union) │  1769.99ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          0 │\n│ Queries with No Change                 │          6 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n</code></pre></div>\n<p dir=\"auto\"></p>\n</details>\n<details><summary>Resource Usage</summary>\n<p dir=\"auto\"><strong>clickbench_extended — base (merge-base)</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Metric</th>\n<th>Value</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Wall time</td>\n<td>73.1s</td>\n</tr>\n<tr>\n<td>Peak memory</td>\n<td>32.5 GiB</td>\n</tr>\n<tr>\n<td>Avg memory</td>\n<td>28.3 GiB</td>\n</tr>\n<tr>\n<td>CPU user</td>\n<td>724.5s</td>\n</tr>\n<tr>\n<td>CPU sys</td>\n<td>23.0s</td>\n</tr>\n<tr>\n<td>Disk read</td>\n<td>0 B</td>\n</tr>\n<tr>\n<td>Disk write</td>\n<td>21.8 MiB</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\"><strong>clickbench_extended — branch</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Metric</th>\n<th>Value</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Wall time</td>\n<td>71.5s</td>\n</tr>\n<tr>\n<td>Peak memory</td>\n<td>34.5 GiB</td>\n</tr>\n<tr>\n<td>Avg memory</td>\n<td>29.3 GiB</td>\n</tr>\n<tr>\n<td>CPU user</td>\n<td>722.7s</td>\n</tr>\n<tr>\n<td>CPU sys</td>\n<td>25.0s</td>\n</tr>\n<tr>\n<td>Disk read</td>\n<td>0 B</td>\n</tr>\n<tr>\n<td>Disk write</td>\n<td>76.0 KiB</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n</details>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#pullrequestreview-3985853186",
+        "body": "",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+          "id": 49781471
+        },
+        "id": 3985853186,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T09:34:09Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#discussion_r2969380745",
+        "body": "Are you trying to express rewriting it like this?\n```\nSELECT s.cnt_a, t.cnt_b\nFROM (SELECT COUNT(DISTINCT a) AS cnt_a FROM t) s\nCROSS JOIN (SELECT COUNT(DISTINCT b) AS cnt_b FROM t) t\n```",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 2969380745,
+        "pull_request_review_id": 3985853186,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T09:34:10Z",
+        "updated_at": "2026-03-21T09:34:10Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": 50,
+        "start_line": null,
+        "path": "datafusion/optimizer/src/multi_distinct_to_cross_join.rs",
+        "body_html": "<p dir=\"auto\">Are you trying to express rewriting it like this?</p>\n<div class=\"snippet-clipboard-content notranslate position-relative overflow-auto\" data-snippet-clipboard-copy-content=\"SELECT s.cnt_a, t.cnt_b\nFROM (SELECT COUNT(DISTINCT a) AS cnt_a FROM t) s\nCROSS JOIN (SELECT COUNT(DISTINCT b) AS cnt_b FROM t) t\"><pre class=\"notranslate\"><code class=\"notranslate\">SELECT s.cnt_a, t.cnt_b\nFROM (SELECT COUNT(DISTINCT a) AS cnt_a FROM t) s\nCROSS JOIN (SELECT COUNT(DISTINCT b) AS cnt_b FROM t) t\n</code></pre></div>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#discussion_r2969402831",
+        "body": "Do we support rewriting \n\"SELECT COUNT(DISTINCT a), SUM(DISTINCT a) FROM t\"? Or are there other rules that prioritize aggregating \n\"a\" first and then calculating the count and sum separately? I don't know much about DataFusion's optimization logic; I just thought of this point.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 2969402831,
+        "pull_request_review_id": 3985869227,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T10:01:31Z",
+        "updated_at": "2026-03-21T10:01:31Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": 63,
+        "start_line": null,
+        "path": "datafusion/optimizer/src/multi_distinct_to_cross_join.rs",
+        "body_html": "<p dir=\"auto\">Do we support rewriting<br>\n\"SELECT COUNT(DISTINCT a), SUM(DISTINCT a) FROM t\"? Or are there other rules that prioritize aggregating<br>\n\"a\" first and then calculating the count and sum separately? I don't know much about DataFusion's optimization logic; I just thought of this point.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#pullrequestreview-3985869227",
+        "body": "",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+          "id": 49781471
+        },
+        "id": 3985869227,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T10:01:31Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4504194203",
+        "body": "Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.",
+        "user": {
+          "login": "github-actions[bot]",
+          "name": "github-actions[bot]",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+          "id": 41898282
+        },
+        "id": 4504194203,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-05-21T02:17:45Z",
+        "updated_at": "2026-05-21T02:17:45Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.</p>"
+      }
+    ],
+    "created_at": "2026-03-14T07:46:24Z",
+    "updated_at": "2026-05-29T02:18:25Z",
+    "closed_at": "2026-05-29T02:18:25Z",
+    "merged_at": null,
+    "commits": 10,
+    "changed_files": 7,
+    "additions": 364,
+    "deletions": 16,
+    "display_url": "https://github.com/apache/datafusion/pull/20940",
+    "display_title": "Add MultiDistinctToCrossJoin optimizer rule for parallel distinct aggregates"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897",
+      "body": "run benchmark clickbench_extended",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "created_at": "2026-03-14T07:46:34Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059954171",
+      "body": "🤖 Benchmark running (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897)\n`Linux bench-c4059947897-230-zrd9d 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux`\nComparing multi-distinct-to-union (f03018e992317c3a59a1d1d6ac7b5b881ecdad35) to 9c3c01a (merge-base) [diff](https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..f03018e992317c3a59a1d1d6ac7b5b881ecdad35) using: clickbench_extended\nResults will be posted here when complete",
+      "user": {
+        "login": "adriangbot",
+        "name": "adriangbot",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+        "id": 267740845
+      },
+      "created_at": "2026-03-14T07:49:49Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4059987594",
+      "body": "🤖 Benchmark completed (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4059947897)\n\n<details><summary>Details</summary>\n<p>\n\n```\nComparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                    HEAD ┃                   multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │      868.72 / 883.32 ±15.10 / 910.39 ms │        529.35 / 558.48 ±21.42 / 592.18 ms │ +1.58x faster │\n│ QQuery 1 │       228.13 / 229.39 ±1.30 / 231.56 ms │         204.65 / 208.60 ±2.30 / 210.71 ms │ +1.10x faster │\n│ QQuery 2 │       534.63 / 535.33 ±0.48 / 536.14 ms │         529.52 / 533.14 ±3.00 / 536.94 ms │     no change │\n│ QQuery 3 │       332.54 / 333.57 ±0.78 / 334.61 ms │         335.89 / 338.00 ±2.63 / 343.17 ms │     no change │\n│ QQuery 4 │      671.13 / 691.89 ±12.82 / 703.04 ms │        690.63 / 710.50 ±14.61 / 727.56 ms │     no change │\n│ QQuery 5 │ 9666.38 / 9914.13 ±142.81 / 10111.98 ms │ 10029.90 / 10119.15 ±135.48 / 10387.78 ms │     no change │\n│ QQuery 6 │   1003.30 / 1010.08 ±10.25 / 1030.40 ms │      994.45 / 1010.25 ±12.36 / 1031.13 ms │     no change │\n│ QQuery 7 │      791.30 / 814.39 ±14.18 / 831.49 ms │       827.78 / 880.70 ±76.41 / 1030.16 ms │  1.08x slower │\n└──────────┴─────────────────────────────────────────┴───────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14412.11ms │\n│ Total Time (multi-distinct-to-union)   │ 14358.81ms │\n│ Average Time (HEAD)                    │  1801.51ms │\n│ Average Time (multi-distinct-to-union) │  1794.85ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          1 │\n│ Queries with No Change                 │          5 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n```\n\n</p>\n</details>\n\n<details><summary>Resource Usage</summary>\n\n**clickbench_extended — base (merge-base)**\n| Metric | Value |\n|--------|-------|\n| Wall time | 72.7s |\n| Peak memory | 33.2 GiB |\n| Avg memory | 28.3 GiB |\n| CPU user | 719.6s |\n| CPU sys | 24.1s |\n| Disk read | 0 B |\n| Disk write | 22.5 MiB |\n\n**clickbench_extended — branch**\n| Metric | Value |\n|--------|-------|\n| Wall time | 72.5s |\n| Peak memory | 34.2 GiB |\n| Avg memory | 27.5 GiB |\n| CPU user | 726.3s |\n| CPU sys | 29.0s |\n| Disk read | 0 B |\n| Disk write | 708.0 KiB |\n\n</details>\n",
+      "user": {
+        "login": "adriangbot",
+        "name": "adriangbot",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+        "id": 267740845
+      },
+      "created_at": "2026-03-14T08:10:42Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382",
+      "body": "\r\nrun benchmark clickbench_extended\r\n\r\n",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "created_at": "2026-03-14T08:26:10Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060024219",
+      "body": "🤖 Benchmark running (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382)\n`Linux bench-c4060020382-231-2jwlp 6.12.55+ #1 SMP Sun Feb  1 08:59:41 UTC 2026 aarch64 GNU/Linux`\nComparing multi-distinct-to-union (4f23297711ec58a1ec650f3af70000979fde670a) to 9c3c01a (merge-base) [diff](https://github.com/apache/datafusion/compare/9c3c01aa54fbf24bb0779e04d47a1492983ed4d7..4f23297711ec58a1ec650f3af70000979fde670a) using: clickbench_extended\nResults will be posted here when complete",
+      "user": {
+        "login": "adriangbot",
+        "name": "adriangbot",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+        "id": 267740845
+      },
+      "created_at": "2026-03-14T08:28:55Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4060078596",
+      "body": "🤖 Benchmark completed (GKE) | [trigger](https://github.com/apache/datafusion/pull/20940#issuecomment-4060020382)\n\n<details><summary>Details</summary>\n<p>\n\n```\nComparing HEAD and multi-distinct-to-union\n--------------------\nBenchmark clickbench_extended.json\n--------------------\n┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Query    ┃                                     HEAD ┃                  multi-distinct-to-union ┃        Change ┃\n┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ QQuery 0 │        807.05 / 817.89 ±8.20 / 832.09 ms │       531.43 / 546.87 ±11.66 / 566.48 ms │ +1.50x faster │\n│ QQuery 1 │        227.70 / 228.71 ±0.52 / 229.11 ms │        206.07 / 208.48 ±1.88 / 211.83 ms │ +1.10x faster │\n│ QQuery 2 │        535.00 / 538.15 ±2.28 / 541.01 ms │        534.82 / 537.43 ±1.48 / 539.15 ms │     no change │\n│ QQuery 3 │        332.84 / 335.91 ±2.09 / 337.99 ms │        333.69 / 336.70 ±3.05 / 342.52 ms │     no change │\n│ QQuery 4 │        669.30 / 678.09 ±6.68 / 687.54 ms │        688.11 / 696.03 ±8.92 / 712.84 ms │     no change │\n│ QQuery 5 │ 9883.21 / 10062.74 ±202.87 / 10455.76 ms │ 9630.03 / 10016.96 ±200.87 / 10182.07 ms │     no change │\n│ QQuery 6 │     989.16 / 1012.00 ±11.69 / 1019.74 ms │      978.54 / 999.13 ±13.15 / 1013.69 ms │     no change │\n│ QQuery 7 │       790.67 / 818.91 ±28.07 / 853.39 ms │       796.78 / 818.32 ±17.57 / 847.16 ms │     no change │\n└──────────┴──────────────────────────────────────────┴──────────────────────────────────────────┴───────────────┘\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┓\n┃ Benchmark Summary                      ┃            ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━┩\n│ Total Time (HEAD)                      │ 14492.40ms │\n│ Total Time (multi-distinct-to-union)   │ 14159.92ms │\n│ Average Time (HEAD)                    │  1811.55ms │\n│ Average Time (multi-distinct-to-union) │  1769.99ms │\n│ Queries Faster                         │          2 │\n│ Queries Slower                         │          0 │\n│ Queries with No Change                 │          6 │\n│ Queries with Failure                   │          0 │\n└────────────────────────────────────────┴────────────┘\n```\n\n</p>\n</details>\n\n<details><summary>Resource Usage</summary>\n\n**clickbench_extended — base (merge-base)**\n| Metric | Value |\n|--------|-------|\n| Wall time | 73.1s |\n| Peak memory | 32.5 GiB |\n| Avg memory | 28.3 GiB |\n| CPU user | 724.5s |\n| CPU sys | 23.0s |\n| Disk read | 0 B |\n| Disk write | 21.8 MiB |\n\n**clickbench_extended — branch**\n| Metric | Value |\n|--------|-------|\n| Wall time | 71.5s |\n| Peak memory | 34.5 GiB |\n| Avg memory | 29.3 GiB |\n| CPU user | 722.7s |\n| CPU sys | 25.0s |\n| Disk read | 0 B |\n| Disk write | 76.0 KiB |\n\n</details>\n",
+      "user": {
+        "login": "adriangbot",
+        "name": "adriangbot",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/267740845?v=4",
+        "id": 267740845
+      },
+      "created_at": "2026-03-14T08:47:02Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#pullrequestreview-3985853186",
+      "body": "",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T09:34:09Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#discussion_r2969380745",
+      "body": "Are you trying to express rewriting it like this?\n```\nSELECT s.cnt_a, t.cnt_b\nFROM (SELECT COUNT(DISTINCT a) AS cnt_a FROM t) s\nCROSS JOIN (SELECT COUNT(DISTINCT b) AS cnt_b FROM t) t\n```",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T09:34:10Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#discussion_r2969402831",
+      "body": "Do we support rewriting \n\"SELECT COUNT(DISTINCT a), SUM(DISTINCT a) FROM t\"? Or are there other rules that prioritize aggregating \n\"a\" first and then calculating the count and sum separately? I don't know much about DataFusion's optimization logic; I just thought of this point.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T10:01:31Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#pullrequestreview-3985869227",
+      "body": "",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T10:01:31Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/20940#issuecomment-4504194203",
+      "body": "Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.",
+      "user": {
+        "login": "github-actions[bot]",
+        "name": "github-actions[bot]",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+        "id": 41898282
+      },
+      "created_at": "2026-05-21T02:17:45Z"
+    }
+  ]
+}

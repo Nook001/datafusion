@@ -1,0 +1,21 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 34104864882
+#
+# Overhead  Shared Object            Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      IPC   [IPC Coverage]
+# ........  .......................  ..........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................  ....................
+#
+    48.39%  infralab-distinct-probe  [.] <hashbrown::map::HashMap<i64, (), foldhash::fast::FixedState>>::insert                                                                                                                                                                                                                                                                                                                                                                                                                                -      -            
+    44.18%  infralab-distinct-probe  [.] <hashbrown::raw::RawTable<(i64, ())>>::reserve_rehash::<hashbrown::map::make_hasher<i64, (), foldhash::fast::FixedState>::{closure#0}>                                                                                                                                                                                                                                                                                                                                                                                   -      -            
+     4.65%  infralab-distinct-probe  [.] <alloc::vec::Vec<i64> as alloc::vec::spec_from_iter::SpecFromIter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>>>::from_iter                                                                                                                                                                                                                                                                                                                            -      -            
+     0.75%  infralab-distinct-probe  [.] <datafusion_functions_aggregate_common::aggregate::count_distinct::native::PrimitiveDistinctCountAccumulator<arrow_array::types::Int64Type> as datafusion_expr_common::accumulator::Accumulator>::update_batch                                                                                                                                                                                                                                                             -      -            
+     0.64%  libc.so.6                [.] __memset_avx512_unaligned_erms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          -      -            
+
+
+#
+# (Tip: If you have debuginfo enabled, try: perf report -s sym,srcline)
+#

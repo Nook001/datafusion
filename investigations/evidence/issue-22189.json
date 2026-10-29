@@ -1,0 +1,219 @@
+{
+  "retrieved_at": "2026-10-29T19:04:24.353Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/22189",
+    "title": "Reduce overhead of parquet metric creation  ",
+    "issue_number": 22189,
+    "body": "I wonder if we should apply the same pattern to the other metrics (lazily initialize them) -- if you can get a few percent in this query maybe it would get us a few in the others\r\n\r\n_Originally posted by @alamb in https://github.com/apache/datafusion/pull/21637#discussion_r3243789052_\r\n            ",
+    "state": "open",
+    "user": {
+      "login": "xudong963",
+      "name": "xudong963",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/41979257?v=4",
+      "id": 41979257
+    },
+    "assignees": [
+      {
+        "login": "xudong963",
+        "name": "xudong963",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/41979257?v=4",
+        "id": 41979257
+      }
+    ],
+    "labels": [
+      {
+        "name": "performance",
+        "color": "EA11B6",
+        "description": "Make DataFusion faster"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 8,
+    "created_at": "2026-05-15T02:18:33Z",
+    "updated_at": "2026-10-29T17:51:46Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/22189",
+    "display_title": "Reduce overhead of parquet metric creation  "
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-4460716801",
+      "body": "I think this will especially help the shorter clickbench queries where the overhead of opening the parquet files is substantial",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 4460716801,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">I think this will especially help the shorter clickbench queries where the overhead of opening the parquet files is substantial</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-4500642692",
+      "body": "Update here\n* @xudong963 tried this in https://github.com/apache/datafusion/pull/22353 🏆 \n\nHowever, upon review I think it turns out we can't use lazy registration as that would change the semantics\n- https://github.com/apache/datafusion/pull/22353#pullrequestreview-4330375309\n\nHowever, I do think we could reduce the overhead of creating metrics in general by avoiding the string allocations. I am copying my comments from https://github.com/apache/datafusion/pull/22353#discussion_r3275629426 here as I think they are relevant:\n\n> One challenge is that there are many many new strings with the file name. Maybe it is worth looking into if we could replace the owned string in Label with a Arc<str> (as another PR)\n> \n> https://github.com/apache/datafusion/blob/3aefba75be1ec571849136de5f2d575e6c505b7b/datafusion/physical-expr-common/src/metrics/mod.rs#L526-L527\n> \n> It might be tricky however, as we would have to retain the special case for `&'static str` 🤔 \n> \n> Maybe we could make a new thing instead of Cow like \n\n```rust\nenum ArcCow {\n  /// Static string\n  Static(&'static str),\n  /// Shared arc\n  Shared(Arc<str>),\n   /// Owned allocation\n   Owned(String)\n}\n```\n\n> With some finagling (like `impl Into<ArcCow>` I suspect we could make it mostly backwards compatible with the existing APIs / callsites 🤔 ",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 4500642692,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Update here</p>\n<ul dir=\"auto\">\n<li><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xudong963/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xudong963\">@xudong963</a> tried this in <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4474877109\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/22353\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/22353/hovercard\" href=\"https://github.com/apache/datafusion/pull/22353\">#22353</a> 🏆</li>\n</ul>\n<p dir=\"auto\">However, upon review I think it turns out we can't use lazy registration as that would change the semantics</p>\n<ul dir=\"auto\">\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4474877109\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/22353\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/22353/hovercard?comment_id=4330375309&amp;comment_type=review\" href=\"https://github.com/apache/datafusion/pull/22353#pullrequestreview-4330375309\">#22353 (review)</a></li>\n</ul>\n<p dir=\"auto\">However, I do think we could reduce the overhead of creating metrics in general by avoiding the string allocations. I am copying my comments from <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4474877109\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/22353\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/22353/hovercard?comment_id=3275629426&amp;comment_type=review_comment\" href=\"https://github.com/apache/datafusion/pull/22353#discussion_r3275629426\">#22353 (comment)</a> here as I think they are relevant:</p>\n<blockquote>\n<p dir=\"auto\">One challenge is that there are many many new strings with the file name. Maybe it is worth looking into if we could replace the owned string in Label with a Arc (as another PR)</p>\n<p dir=\"auto\"></p><div class=\"Box Box--condensed my-2\">\n  <div class=\"Box-header f6\">\n    <p class=\"mb-0 text-bold\">\n      <a href=\"https://github.com/apache/datafusion/blob/3aefba75be1ec571849136de5f2d575e6c505b7b/datafusion/physical-expr-common/src/metrics/mod.rs#L526-L527\">datafusion/datafusion/physical-expr-common/src/metrics/mod.rs</a>\n    </p>\n    <p class=\"mb-0 color-fg-muted\">\n        Lines 526 to 527\n      in\n      <a data-pjax=\"true\" class=\"commit-tease-sha Link--inTextBlock\" href=\"/apache/datafusion/commit/3aefba75be1ec571849136de5f2d575e6c505b7b\">3aefba7</a>\n    </p>\n  </div>\n  <div itemprop=\"text\" class=\"Box-body p-0 blob-wrapper blob-wrapper-embedded data\">\n    <table class=\"highlight tab-size mb-0 js-file-line-container\" data-tab-size=\"8\" data-paste-markdown-skip=\"\">\n\n        <tbody><tr class=\"border-0\">\n          <td id=\"L526\" class=\"blob-num border-0 tmp-px-3 py-0 color-bg-default\" data-line-number=\"526\"></td>\n          <td id=\"LC526\" class=\"blob-code border-0 tmp-px-3 py-0 color-bg-default blob-code-inner js-file-line\"> <span class=\"pl-c1\">name</span><span class=\"pl-kos\">:</span> <span class=\"pl-smi\">Cow</span><span class=\"pl-kos\">&lt;</span><span class=\"pl-c1\">'</span><span class=\"pl-ent\">static</span><span class=\"pl-kos\">,</span> <span class=\"pl-smi\">str</span><span class=\"pl-kos\">&gt;</span><span class=\"pl-kos\">,</span> </td>\n        </tr>\n\n        <tr class=\"border-0\">\n          <td id=\"L527\" class=\"blob-num border-0 tmp-px-3 py-0 color-bg-default\" data-line-number=\"527\"></td>\n          <td id=\"LC527\" class=\"blob-code border-0 tmp-px-3 py-0 color-bg-default blob-code-inner js-file-line\"> <span class=\"pl-c1\">value</span><span class=\"pl-kos\">:</span> <span class=\"pl-smi\">Cow</span><span class=\"pl-kos\">&lt;</span><span class=\"pl-c1\">'</span><span class=\"pl-ent\">static</span><span class=\"pl-kos\">,</span> <span class=\"pl-smi\">str</span><span class=\"pl-kos\">&gt;</span><span class=\"pl-kos\">,</span> </td>\n        </tr>\n    </tbody></table>\n  </div>\n</div>\n<p></p>\n<p dir=\"auto\">It might be tricky however, as we would have to retain the special case for <code class=\"notranslate\">&amp;'static str</code> 🤔</p>\n<p dir=\"auto\">Maybe we could make a new thing instead of Cow like</p>\n</blockquote>\n<div class=\"highlight highlight-source-rust notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"enum ArcCow {\n  /// Static string\n  Static(&amp;'static str),\n  /// Shared arc\n  Shared(Arc&lt;str&gt;),\n   /// Owned allocation\n   Owned(String)\n}\"><pre class=\"notranslate\"><span class=\"pl-k\">enum</span> <span class=\"pl-smi\">ArcCow</span> <span class=\"pl-kos\">{</span>\n  <span class=\"pl-c\">/// Static string</span>\n<span class=\"pl-c\"></span>  <span class=\"pl-v\">Static</span><span class=\"pl-kos\">(</span><span class=\"pl-c1\">&amp;</span><span class=\"pl-c1\">'</span><span class=\"pl-ent\">static</span> <span class=\"pl-smi\">str</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">,</span>\n  <span class=\"pl-c\">/// Shared arc</span>\n<span class=\"pl-c\"></span>  <span class=\"pl-v\">Shared</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">Arc</span><span class=\"pl-kos\">&lt;</span><span class=\"pl-smi\">str</span><span class=\"pl-kos\">&gt;</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">,</span>\n   <span class=\"pl-c\">/// Owned allocation</span>\n<span class=\"pl-c\"></span>   <span class=\"pl-v\">Owned</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">String</span><span class=\"pl-kos\">)</span>\n<span class=\"pl-kos\">}</span></pre></div>\n<blockquote>\n<p dir=\"auto\">With some finagling (like <code class=\"notranslate\">impl Into&lt;ArcCow&gt;</code> I suspect we could make it mostly backwards compatible with the existing APIs / callsites 🤔</p>\n</blockquote>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-4500646326",
+      "body": "Maybe \n```rust\nenum SharedStr {\n  /// Static string\n  Static(&'static str),\n  /// Shared arc\n  Shared(Arc<str>),\n   /// Owned allocation\n   Owned(String)\n}\n```\n\n",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 4500646326,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Maybe</p>\n<div class=\"highlight highlight-source-rust notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"enum SharedStr {\n  /// Static string\n  Static(&amp;'static str),\n  /// Shared arc\n  Shared(Arc&lt;str&gt;),\n   /// Owned allocation\n   Owned(String)\n}\"><pre class=\"notranslate\"><span class=\"pl-k\">enum</span> <span class=\"pl-smi\">SharedStr</span> <span class=\"pl-kos\">{</span>\n  <span class=\"pl-c\">/// Static string</span>\n<span class=\"pl-c\"></span>  <span class=\"pl-v\">Static</span><span class=\"pl-kos\">(</span><span class=\"pl-c1\">&amp;</span><span class=\"pl-c1\">'</span><span class=\"pl-ent\">static</span> <span class=\"pl-smi\">str</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">,</span>\n  <span class=\"pl-c\">/// Shared arc</span>\n<span class=\"pl-c\"></span>  <span class=\"pl-v\">Shared</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">Arc</span><span class=\"pl-kos\">&lt;</span><span class=\"pl-smi\">str</span><span class=\"pl-kos\">&gt;</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">,</span>\n   <span class=\"pl-c\">/// Owned allocation</span>\n<span class=\"pl-c\"></span>   <span class=\"pl-v\">Owned</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">String</span><span class=\"pl-kos\">)</span>\n<span class=\"pl-kos\">}</span></pre></div>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-4500664620",
+      "body": "And instead of \n\n```rust\n        let row_groups_pruned_bloom_filter = MetricBuilder::new(metrics)\n            .with_new_label(\"filename\", filename.to_string())\n            .with_type(MetricType::Summary)\n            .pruning_metrics(\"row_groups_pruned_bloom_filter\", partition);\n\n        let limit_pruned_row_groups = MetricBuilder::new(metrics)\n            .with_new_label(\"filename\", filename.to_string())\n            .with_type(MetricType::Summary)\n            .pruning_metrics(\"limit_pruned_row_groups\", partition);\n```\n\nIt could look something like\n\n```rust\n        // Allocate a single copy of the filename\n        let shared_filename = Arc::from(filename.as_str());\n\n        let row_groups_pruned_bloom_filter = MetricBuilder::new(metrics)\n            .with_new_label(\"filename\", Arc::clone(&shared_filename))     // <---- Only copy Arc here, not new string\n            .with_type(MetricType::Summary)\n            .pruning_metrics(\"row_groups_pruned_bloom_filter\", partition);  \n\n        let limit_pruned_row_groups = MetricBuilder::new(metrics)\n            .with_new_label(\"filename\", Arc::clone(&shared_filename))     // <---- Only copy Arc here, not new string\n            .with_type(MetricType::Summary)\n            .pruning_metrics(\"limit_pruned_row_groups\", partition);\n```",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 4500664620,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">And instead of</p>\n<div class=\"highlight highlight-source-rust notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"        let row_groups_pruned_bloom_filter = MetricBuilder::new(metrics)\n            .with_new_label(&quot;filename&quot;, filename.to_string())\n            .with_type(MetricType::Summary)\n            .pruning_metrics(&quot;row_groups_pruned_bloom_filter&quot;, partition);\n\n        let limit_pruned_row_groups = MetricBuilder::new(metrics)\n            .with_new_label(&quot;filename&quot;, filename.to_string())\n            .with_type(MetricType::Summary)\n            .pruning_metrics(&quot;limit_pruned_row_groups&quot;, partition);\"><pre class=\"notranslate\">        <span class=\"pl-k\">let</span> row_groups_pruned_bloom_filter = <span class=\"pl-smi\">MetricBuilder</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">new</span><span class=\"pl-kos\">(</span>metrics<span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_new_label</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"filename\"</span><span class=\"pl-kos\">,</span> filename<span class=\"pl-kos\">.</span><span class=\"pl-en\">to_string</span><span class=\"pl-kos\">(</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_type</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">MetricType</span><span class=\"pl-kos\">::</span><span class=\"pl-v\">Summary</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">pruning_metrics</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"row_groups_pruned_bloom_filter\"</span><span class=\"pl-kos\">,</span> partition<span class=\"pl-kos\">)</span><span class=\"pl-kos\">;</span>\n\n        <span class=\"pl-k\">let</span> limit_pruned_row_groups = <span class=\"pl-smi\">MetricBuilder</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">new</span><span class=\"pl-kos\">(</span>metrics<span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_new_label</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"filename\"</span><span class=\"pl-kos\">,</span> filename<span class=\"pl-kos\">.</span><span class=\"pl-en\">to_string</span><span class=\"pl-kos\">(</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_type</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">MetricType</span><span class=\"pl-kos\">::</span><span class=\"pl-v\">Summary</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">pruning_metrics</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"limit_pruned_row_groups\"</span><span class=\"pl-kos\">,</span> partition<span class=\"pl-kos\">)</span><span class=\"pl-kos\">;</span></pre></div>\n<p dir=\"auto\">It could look something like</p>\n<div class=\"highlight highlight-source-rust notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"        // Allocate a single copy of the filename\n        let shared_filename = Arc::from(filename.as_str());\n\n        let row_groups_pruned_bloom_filter = MetricBuilder::new(metrics)\n            .with_new_label(&quot;filename&quot;, Arc::clone(&amp;shared_filename))     // &lt;---- Only copy Arc here, not new string\n            .with_type(MetricType::Summary)\n            .pruning_metrics(&quot;row_groups_pruned_bloom_filter&quot;, partition);  \n\n        let limit_pruned_row_groups = MetricBuilder::new(metrics)\n            .with_new_label(&quot;filename&quot;, Arc::clone(&amp;shared_filename))     // &lt;---- Only copy Arc here, not new string\n            .with_type(MetricType::Summary)\n            .pruning_metrics(&quot;limit_pruned_row_groups&quot;, partition);\"><pre class=\"notranslate\">        <span class=\"pl-c\">// Allocate a single copy of the filename</span>\n        <span class=\"pl-k\">let</span> shared_filename = <span class=\"pl-smi\">Arc</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">from</span><span class=\"pl-kos\">(</span>filename<span class=\"pl-kos\">.</span><span class=\"pl-en\">as_str</span><span class=\"pl-kos\">(</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">)</span><span class=\"pl-kos\">;</span>\n\n        <span class=\"pl-k\">let</span> row_groups_pruned_bloom_filter = <span class=\"pl-smi\">MetricBuilder</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">new</span><span class=\"pl-kos\">(</span>metrics<span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_new_label</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"filename\"</span><span class=\"pl-kos\">,</span> <span class=\"pl-smi\">Arc</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">clone</span><span class=\"pl-kos\">(</span><span class=\"pl-c1\">&amp;</span>shared_filename<span class=\"pl-kos\">)</span><span class=\"pl-kos\">)</span>     <span class=\"pl-c\">// &lt;---- Only copy Arc here, not new string</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_type</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">MetricType</span><span class=\"pl-kos\">::</span><span class=\"pl-v\">Summary</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">pruning_metrics</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"row_groups_pruned_bloom_filter\"</span><span class=\"pl-kos\">,</span> partition<span class=\"pl-kos\">)</span><span class=\"pl-kos\">;</span>  \n\n        <span class=\"pl-k\">let</span> limit_pruned_row_groups = <span class=\"pl-smi\">MetricBuilder</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">new</span><span class=\"pl-kos\">(</span>metrics<span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_new_label</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"filename\"</span><span class=\"pl-kos\">,</span> <span class=\"pl-smi\">Arc</span><span class=\"pl-kos\">::</span><span class=\"pl-en\">clone</span><span class=\"pl-kos\">(</span><span class=\"pl-c1\">&amp;</span>shared_filename<span class=\"pl-kos\">)</span><span class=\"pl-kos\">)</span>     <span class=\"pl-c\">// &lt;---- Only copy Arc here, not new string</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">with_type</span><span class=\"pl-kos\">(</span><span class=\"pl-smi\">MetricType</span><span class=\"pl-kos\">::</span><span class=\"pl-v\">Summary</span><span class=\"pl-kos\">)</span>\n            <span class=\"pl-kos\">.</span><span class=\"pl-en\">pruning_metrics</span><span class=\"pl-kos\">(</span><span class=\"pl-s\">\"limit_pruned_row_groups\"</span><span class=\"pl-kos\">,</span> partition<span class=\"pl-kos\">)</span><span class=\"pl-kos\">;</span></pre></div>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-6490924131",
+      "body": "We hit this one as a memory problem rather than a latency one, so here are some numbers in case they help.\n\n**Setup:** DataFusion 54.1.0, via Sail 0.7.1.\n- **Query:** `select x, count(*) … group by x` over a hive-partitioned parquet table.\n- **Table:** a wide schema (488 columns, the union of many sources). Most files are small, about 1,100 files per day of data.\n- **Server:** one process with a 3.9 GB cgroup limit, 4 partitions, statistics collection off.\n\n**What we saw.** Peak memory grew linearly with the number of files scanned, about 32 MB per day (about 29 KB per file). A 27-day scan peaked at about 915 MB. A jemalloc heap profile, unsampled, put about 85% of the peak under `ParquetFileMetrics::new`. The plan's `ExecutionPlanMetricsSet` keeps every registered metric until the query ends, so these sets add up over the whole scan rather than being freed file by file.\n\n**Two things we noticed in 54.1.0:**\n1. **Duplicate registration:** each opened file gets two `ParquetFileMetrics`, one from the reader factory (`DefaultParquetFileReaderFactory::create_reader`) and one from `ParquetMorselizer::prepare_open_file`, plus a `BaselineMetrics` per file. That is about 40 filename-labelled metrics per file. Sharing a single instance per file would halve this without changing what users see, unless I'm missing a reason they're separate.\n2. **#22406 doesn't change the count:** sharing the label string removes the copies, but the number of `Metric` entries still grows with the number of files.\n\n**What we tried (local patch, not proposed as-is).** Each scan partition registers **one unlabelled** `ParquetFileMetrics` and one `BaselineMetrics` on first use. Every file opened on that partition adds to the same counters. The reader keeps its own per-file byte count, so the scan-efficiency ratio stays correct.\n\nResults, same query and data, run alternately:\n\n| Days scanned | 54.1.0 peak | patched peak | time |\n|---|---|---|---|\n| 14 | 505 MB | 188 MB | 103.5 s → 101.8 s |\n| 27 | 913–921 MB | 344–350 MB | 205–231 s → 179–197 s (13–15% faster) |\n\nResults were identical. Metrics are still registered eagerly and visible during execution, which I understand was the concern with #22353, and `EXPLAIN ANALYZE` totals don't change. **The trade-off** is that per-file metric rows and the `filename` label disappear, so this changes observable output. That's fine for us, because we only look at aggregates, but it probably shouldn't be the default.\n\n**A possible shape upstream:** a parquet option, say `per_file_metrics` (default `true`), that falls back to per-partition metrics on scans of very many files. That, together with (1), would cover the case of wide tables with many small files.\n\nHappy to share the patch or turn this into a PR if one of these directions sounds acceptable.\n",
+      "user": {
+        "login": "vaibhavbodhane",
+        "name": "vaibhavbodhane",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/153277623?v=4",
+        "id": 153277623
+      },
+      "id": 6490924131,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">We hit this one as a memory problem rather than a latency one, so here are some numbers in case they help.</p>\n<p dir=\"auto\"><strong>Setup:</strong> DataFusion 54.1.0, via Sail 0.7.1.</p>\n<ul dir=\"auto\">\n<li><strong>Query:</strong> <code class=\"notranslate\">select x, count(*) … group by x</code> over a hive-partitioned parquet table.</li>\n<li><strong>Table:</strong> a wide schema (488 columns, the union of many sources). Most files are small, about 1,100 files per day of data.</li>\n<li><strong>Server:</strong> one process with a 3.9 GB cgroup limit, 4 partitions, statistics collection off.</li>\n</ul>\n<p dir=\"auto\"><strong>What we saw.</strong> Peak memory grew linearly with the number of files scanned, about 32 MB per day (about 29 KB per file). A 27-day scan peaked at about 915 MB. A jemalloc heap profile, unsampled, put about 85% of the peak under <code class=\"notranslate\">ParquetFileMetrics::new</code>. The plan's <code class=\"notranslate\">ExecutionPlanMetricsSet</code> keeps every registered metric until the query ends, so these sets add up over the whole scan rather than being freed file by file.</p>\n<p dir=\"auto\"><strong>Two things we noticed in 54.1.0:</strong></p>\n<ol dir=\"auto\">\n<li><strong>Duplicate registration:</strong> each opened file gets two <code class=\"notranslate\">ParquetFileMetrics</code>, one from the reader factory (<code class=\"notranslate\">DefaultParquetFileReaderFactory::create_reader</code>) and one from <code class=\"notranslate\">ParquetMorselizer::prepare_open_file</code>, plus a <code class=\"notranslate\">BaselineMetrics</code> per file. That is about 40 filename-labelled metrics per file. Sharing a single instance per file would halve this without changing what users see, unless I'm missing a reason they're separate.</li>\n<li><strong><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4491351762\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/22406\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/22406/hovercard\" href=\"https://github.com/apache/datafusion/pull/22406\">#22406</a> doesn't change the count:</strong> sharing the label string removes the copies, but the number of <code class=\"notranslate\">Metric</code> entries still grows with the number of files.</li>\n</ol>\n<p dir=\"auto\"><strong>What we tried (local patch, not proposed as-is).</strong> Each scan partition registers <strong>one unlabelled</strong> <code class=\"notranslate\">ParquetFileMetrics</code> and one <code class=\"notranslate\">BaselineMetrics</code> on first use. Every file opened on that partition adds to the same counters. The reader keeps its own per-file byte count, so the scan-efficiency ratio stays correct.</p>\n<p dir=\"auto\">Results, same query and data, run alternately:</p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Days scanned</th>\n<th>54.1.0 peak</th>\n<th>patched peak</th>\n<th>time</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>14</td>\n<td>505 MB</td>\n<td>188 MB</td>\n<td>103.5 s → 101.8 s</td>\n</tr>\n<tr>\n<td>27</td>\n<td>913–921 MB</td>\n<td>344–350 MB</td>\n<td>205–231 s → 179–197 s (13–15% faster)</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\">Results were identical. Metrics are still registered eagerly and visible during execution, which I understand was the concern with <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4474877109\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/22353\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/22353/hovercard\" href=\"https://github.com/apache/datafusion/pull/22353\">#22353</a>, and <code class=\"notranslate\">EXPLAIN ANALYZE</code> totals don't change. <strong>The trade-off</strong> is that per-file metric rows and the <code class=\"notranslate\">filename</code> label disappear, so this changes observable output. That's fine for us, because we only look at aggregates, but it probably shouldn't be the default.</p>\n<p dir=\"auto\"><strong>A possible shape upstream:</strong> a parquet option, say <code class=\"notranslate\">per_file_metrics</code> (default <code class=\"notranslate\">true</code>), that falls back to per-partition metrics on scans of very many files. That, together with (1), would cover the case of wide tables with many small files.</p>\n<p dir=\"auto\">Happy to share the patch or turn this into a PR if one of these directions sounds acceptable.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-6504228183",
+      "body": "> What we saw. Peak memory grew linearly with the number of files scanned, about 32 MB per day (about 29 KB per file). A 27-day scan peaked at about 915 MB. A jemalloc heap profile, unsampled, put about 85% of the peak under ParquetFileMetrics::new. The plan's ExecutionPlanMetricsSet keeps every registered metric until the query ends, so these sets add up over the whole scan rather than being freed file by file.\n\n\nThat sounds embarassing. Maybe we should have some limit or something that caps the number of metrics (as keeping per file statsistics for 14 x 1,000 files is expensive and will likely be of limited use",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 6504228183,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<blockquote>\n<p dir=\"auto\">What we saw. Peak memory grew linearly with the number of files scanned, about 32 MB per day (about 29 KB per file). A 27-day scan peaked at about 915 MB. A jemalloc heap profile, unsampled, put about 85% of the peak under ParquetFileMetrics::new. The plan's ExecutionPlanMetricsSet keeps every registered metric until the query ends, so these sets add up over the whole scan rather than being freed file by file.</p>\n</blockquote>\n<p dir=\"auto\">That sounds embarassing. Maybe we should have some limit or something that caps the number of metrics (as keeping per file statsistics for 14 x 1,000 files is expensive and will likely be of limited use</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-6504232353",
+      "body": "> A possible shape upstream: a parquet option, say per_file_metrics (default true), that falls back to per-partition metrics on scans of very many files. That, together with (1), would cover the case of wide tables with many small files.\n\nyes I think this makes a lot of sense",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 6504232353,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<blockquote>\n<p dir=\"auto\">A possible shape upstream: a parquet option, say per_file_metrics (default true), that falls back to per-partition metrics on scans of very many files. That, together with (1), would cover the case of wide tables with many small files.</p>\n</blockquote>\n<p dir=\"auto\">yes I think this makes a lot of sense</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/22189#issuecomment-6504244269",
+      "body": "> Duplicate registration: each opened file gets two ParquetFileMetrics, one from the reader factory (DefaultParquetFileReaderFactory::create_reader) and one from ParquetMorselizer::prepare_open_file, plus a BaselineMetrics per file. That is about 40 filename-labelled metrics per file. Sharing a single instance per file would halve this without changing what users see, unless I'm missing a reason they're separate.\n\n\nreducing duplication also make s sense to me -- please create a  PR for each of these ideas and tag me on it and I will be happy to review",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 6504244269,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<blockquote>\n<p dir=\"auto\">Duplicate registration: each opened file gets two ParquetFileMetrics, one from the reader factory (DefaultParquetFileReaderFactory::create_reader) and one from ParquetMorselizer::prepare_open_file, plus a BaselineMetrics per file. That is about 40 filename-labelled metrics per file. Sharing a single instance per file would halve this without changing what users see, unless I'm missing a reason they're separate.</p>\n</blockquote>\n<p dir=\"auto\">reducing duplication also make s sense to me -- please create a  PR for each of these ideas and tag me on it and I will be happy to review</p>"
+    }
+  ]
+}

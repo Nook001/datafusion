@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/investigations/20942/evidence/matrix/utf8_n2000000_d200000_p6_null0_split_no_rewrite_r1.time.txt",
+    "taskset",
+    "-c",
+    "0-5",
+    "/tmp/infralab-datafusion/target/release/infralab-distinct-probe",
+    "--rows",
+    "2000000",
+    "--cardinality",
+    "200000",
+    "--partitions",
+    "6",
+    "--kind",
+    "utf8",
+    "--mode",
+    "split_no_rewrite",
+    "--null-every",
+    "0",
+    "--iterations",
+    "3"
+  ],
+  "started_utc": "2026-10-29T19:15:23Z",
+  "exit_code": 0,
+  "process_wall_s": 1.0010548640275374
+}

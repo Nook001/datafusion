@@ -1,0 +1,57 @@
+{
+  "retrieved_at": "2026-10-29T19:04:21.738Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/21554",
+    "title": "Cache parquet pruning setup across files with the same physical schema",
+    "issue_number": 21554,
+    "body": "### Is your feature request related to a problem or challenge?\n\nIn the parquet opener, DataFusion currently does per-file schema adaptation and pruning setup, including predicate rewrites and pruning predicate construction:\n- https://github.com/apache/datafusion/blob/590a5178c8ffb17873f612a9c1da234fc1a18ff3/datafusion/datasource-parquet/src/opener.rs#L743-L788\n- https://github.com/apache/datafusion/blob/590a5178c8ffb17873f612a9c1da234fc1a18ff3/datafusion/datasource-parquet/src/opener.rs#L1523-L1547\n\nAs @adriangb noted on https://github.com/apache/datafusion/pull/21480#issuecomment-4215673477, many deployments only have a small number of physical schemas, often just one, so repeating the same work across many files is wasteful.\n\nPR #21480 from @fpetkovski improved this area by avoiding page pruning predicate construction unless page indexes are enabled, but we can do better and cache equivalent pruning setup across files with the same physical schema.\n\n### Describe the solution you'd like\n\nCache parquet pruning setup across files when the physical schema and other correctness-relevant inputs are the same.\n\nThis likely includes:\n- expression/schema rewrite results\n- normal and pruning predicate construction\n\n### Describe alternatives you've considered\n\nDo nothing\n\n### Additional context\n\nRelevant links:\n- Tracking comment from @adriangb:\n  https://github.com/apache/datafusion/pull/21480#issuecomment-4215673477\n- Original PR from @fpetkovski:\n  https://github.com/apache/datafusion/pull/21480\n- Page index loading / page pruning setup:\n  https://github.com/apache/datafusion/blob/590a5178c8ffb17873f612a9c1da234fc1a18ff3/datafusion/datasource-parquet/src/opener.rs#L793-L839\n",
+    "state": "open",
+    "user": {
+      "login": "alamb",
+      "name": "alamb",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+      "id": 490673
+    },
+    "assignees": null,
+    "labels": [
+      {
+        "name": "performance",
+        "color": "EA11B6",
+        "description": "Make DataFusion faster"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 1,
+    "created_at": "2026-04-11T10:16:16Z",
+    "updated_at": "2026-07-11T09:47:45Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/21554",
+    "display_title": "Cache parquet pruning setup across files with the same physical schema"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/21554#issuecomment-4944530655",
+      "body": "@alamb \nPTAL at #21566 ",
+      "user": {
+        "login": "kosiew",
+        "name": "kosiew",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/29057562?v=4",
+        "id": 29057562
+      },
+      "id": 4944530655,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/alamb/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/alamb\">@alamb</a><br>\nPTAL at <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4247336626\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/21566\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/21566/hovercard\" href=\"https://github.com/apache/datafusion/pull/21566\">#21566</a></p>"
+    }
+  ]
+}

@@ -1,0 +1,928 @@
+{
+  "retrieved_at": "2026-10-29T19:07:38.499Z",
+  "pull_request": {
+    "url": "https://github.com/apache/datafusion/pull/21088",
+    "number": 21088,
+    "state": "closed",
+    "merged": false,
+    "mergeable": true,
+    "draft": false,
+    "body": "Add MultiDistinctCountRewrite in datafusion-optimizer and register it in Optimizer::new() after SingleDistinctToGroupBy. Rewrites 2+ simple COUNT(DISTINCT) on different args into a join of two-phase aggregates; filter distinct_arg IS NOT NULL on each branch for correct NULL semantics.\r\n\r\n✅ Unit tests in datafusion-optimizer; ✅ SQL integration test (NULLs) in core_integration.\r\n\r\n## Which issue does this PR close?\r\n\r\n- Closes #21087.\r\n\r\n## Rationale for this change\r\n\r\nQueries with multiple COUNT(DISTINCT col_i) in the same GROUP BY can force independent distinct state per aggregate (e.g. separate hash sets), which scales poorly in memory when several high-cardinality distinct columns appear together.\r\n\r\nDataFusion already optimizes the single shared distinct field case via SingleDistinctToGroupBy. This PR adds a conservative logical rewrite for multiple distinct COUNT(DISTINCT …) arguments by splitting work into per-distinct branches joined on the group keys, which reduces peak memory for eligible plans.\r\n\r\nCOUNT(DISTINCT x) must ignore NULL x; the rewrite applies x IS NOT NULL on each distinct branch before inner grouping so semantics stay aligned with count_distinct behavior.\r\n\r\n## What changes are included in this PR?\r\n\r\nNew module: \r\n- datafusion/optimizer/src/multi_distinct_count_rewrite.rs — MultiDistinctCountRewrite (OptimizerRule, bottom-up).\r\n- Register rule in datafusion/optimizer/src/optimizer.rs immediately after SingleDistinctToGroupBy.\r\n- Export module from datafusion/optimizer/src/lib.rs.\r\n\r\nTests:\r\n- datafusion-optimizer: rewrite vs no-op cases (single distinct, mixed aggs, two distincts).\r\n- datafusion core_integration: datafusion/core/tests/sql/aggregates/multi_distinct_count_rewrite.rs — SQL over MemTable with NULLs.\r\n\r\n## Are these changes tested?\r\n\r\nYes.\r\n\r\n- cargo test -p datafusion-optimizer (includes new unit tests).\r\n- cargo test -p datafusion --test core_integration multi_count_distinct (SQL + NULLs).\r\n\r\n## Are there any user-facing changes?\r\n\r\n- Behavior / plans: For queries that match the rule, logical plans (and thus EXPLAIN output) can differ: eligible multi–COUNT(DISTINCT) aggregates may appear as joins of sub-aggregates instead of a single Aggregate with multiple distinct counts.\r\n\r\n- Results: Intended to be semantics-preserving for supported patterns (including NULL handling via filters).\r\n\r\n- Public API: No intentional breaking changes to public Rust APIs; this is an internal optimizer rule enabled by default.\r\n\r\n- Docs: No user guide update required unless maintainers want an “optimizer behavior” note; can add if requested.\r\n",
+    "title": "perf: default multi COUNT(DISTINCT) logical optimizer rewrite",
+    "base": "main",
+    "base_sha": "4f13319b1472dce0c5b71b2b9807d75aebacf1f6",
+    "head": "feat/multi-distinct-count-rewrite",
+    "head_sha": "c0f46409bd3bd2ef71169281934122ff9721a51a",
+    "head_repo_id": 1187800022,
+    "head_repo_full_name": "ydgandhi/datafusion",
+    "merge_commit_sha": "83e02b7f4a262a2abe12bd6c245b740206f233bc",
+    "user": {
+      "login": "ydgandhi",
+      "name": "ydgandhi",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+      "id": 19206585
+    },
+    "requested_reviewers": null,
+    "requested_team_reviewers": null,
+    "diff": "@@ -969,6 +969,11 @@ config_namespace! {\n         /// predicate push down.\n         pub filter_null_join_keys: bool, default = false\n \n+        /// When `true`, rewrite one grouped aggregate that has multiple `COUNT(DISTINCT …)` into\n+        /// joins of per-distinct sub-aggregates (can lower peak memory; adds join work). Default\n+        /// `false` until workload benchmarks justify enabling broadly.\n+        pub enable_multi_distinct_count_rewrite: bool, default = false\n+\n         /// Should DataFusion repartition data using the aggregate keys to execute aggregates\n         /// in parallel using the provided `target_partitions` level\n         pub repartition_aggregations: bool, default = true\n@@ -1024,3 +1024,4 @@ pub fn split_fuzz_timestamp_data_into_batches(\n \n pub mod basic;\n pub mod dict_nulls;\n+pub mod multi_distinct_count_rewrite;\n@@ -0,0 +1,216 @@\n+// Licensed to the Apache Software Foundation (ASF) under one\n+// or more contributor license agreements.  See the NOTICE file\n+// distributed with this work for additional information\n+// regarding copyright ownership.  The ASF licenses this file\n+// to you under the Apache License, Version 2.0 (the\n+// \"License\"); you may not use this file except in compliance\n+// with the License.  You may obtain a copy of the License at\n+//\n+//   http://www.apache.org/licenses/LICENSE-2.0\n+//\n+// Unless required by applicable law or agreed to in writing,\n+// software distributed under the License is distributed on an\n+// \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n+// KIND, either express or implied.  See the License for the\n+// specific language governing permissions and limitations\n+// under the License.\n+\n+//! End-to-end SQL tests for the multi-`COUNT(DISTINCT)` logical optimizer rewrite.\n+\n+use super::*;\n+use arrow::array::{Float64Array, Int32Array, StringArray};\n+use datafusion::common::test_util::batches_to_sort_string;\n+use datafusion::execution::config::SessionConfig;\n+use datafusion::execution::context::SessionContext;\n+use datafusion_catalog::MemTable;\n+\n+fn session_with_multi_distinct_count_rewrite() -> SessionContext {\n+    SessionContext::new_with_config(SessionConfig::new().set_bool(\n+        \"datafusion.optimizer.enable_multi_distinct_count_rewrite\",\n+        true,\n+    ))\n+}\n+\n+#[tokio::test]\n+async fn multi_count_distinct_matches_expected_with_nulls() -> Result<()> {\n+    let ctx = session_with_multi_distinct_count_rewrite();\n+    let schema = Arc::new(Schema::new(vec![\n+        Field::new(\"g\", DataType::Int32, false),\n+        Field::new(\"b\", DataType::Utf8, true),\n+        Field::new(\"c\", DataType::Utf8, true),\n+    ]));\n+    let batch = RecordBatch::try_new(\n+        schema.clone(),\n+        vec![\n+            Arc::new(Int32Array::from(vec![1, 1, 1])),\n+            Arc::new(StringArray::from(vec![Some(\"x\"), None, Some(\"x\")])),\n+            Arc::new(StringArray::from(vec![None, Some(\"y\"), Some(\"y\")])),\n+        ],\n+    )?;\n+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;\n+    ctx.register_table(\"t\", Arc::new(provider))?;\n+\n+    let sql =\n+        \"SELECT g, COUNT(DISTINCT b) AS cb, COUNT(DISTINCT c) AS cc FROM t GROUP BY g\";\n+    let batches = ctx.sql(sql).await?.collect().await?;\n+    let out = batches_to_sort_string(&batches);\n+\n+    assert_eq!(\n+        out,\n+        \"+---+----+----+\\n\\\n+         | g | cb | cc |\\n\\\n+         +---+----+----+\\n\\\n+         | 1 | 1  | 1  |\\n\\\n+         +---+----+----+\"\n+    );\n+    Ok(())\n+}\n+\n+/// `COUNT(*)` + two `COUNT(DISTINCT …)` per group (BI-style); must match non-rewritten semantics.\n+#[tokio::test]\n+async fn multi_count_distinct_with_count_star_matches_expected() -> Result<()> {\n+    let ctx = session_with_multi_distinct_count_rewrite();\n+    let schema = Arc::new(Schema::new(vec![\n+        Field::new(\"g\", DataType::Int32, false),\n+        Field::new(\"b\", DataType::Int32, false),\n+        Field::new(\"c\", DataType::Int32, false),\n+    ]));\n+    let batch = RecordBatch::try_new(\n+        schema.clone(),\n+        vec![\n+            Arc::new(Int32Array::from(vec![1, 1, 1])),\n+            Arc::new(Int32Array::from(vec![1, 2, 1])),\n+            Arc::new(Int32Array::from(vec![10, 20, 30])),\n+        ],\n+    )?;\n+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;\n+    ctx.register_table(\"t\", Arc::new(provider))?;\n+\n+    let sql = \"SELECT g, COUNT(*) AS n, COUNT(DISTINCT b) AS db, COUNT(DISTINCT c) AS dc \\\n+               FROM t GROUP BY g\";\n+    let batches = ctx.sql(sql).await?.collect().await?;\n+    let out = batches_to_sort_string(&batches);\n+\n+    assert_eq!(\n+        out,\n+        \"+---+---+----+----+\\n\\\n+         | g | n | db | dc |\\n\\\n+         +---+---+----+----+\\n\\\n+         | 1 | 3 | 2  | 3  |\\n\\\n+         +---+---+----+----+\"\n+    );\n+    Ok(())\n+}\n+\n+/// Multiple `GROUP BY` keys: join must align on all keys.\n+#[tokio::test]\n+async fn multi_count_distinct_two_group_keys_matches_expected() -> Result<()> {\n+    let ctx = session_with_multi_distinct_count_rewrite();\n+    let schema = Arc::new(Schema::new(vec![\n+        Field::new(\"g1\", DataType::Int32, false),\n+        Field::new(\"g2\", DataType::Int32, false),\n+        Field::new(\"b\", DataType::Int32, false),\n+        Field::new(\"c\", DataType::Int32, false),\n+    ]));\n+    let batch = RecordBatch::try_new(\n+        schema.clone(),\n+        vec![\n+            Arc::new(Int32Array::from(vec![1, 1, 1])),\n+            Arc::new(Int32Array::from(vec![1, 1, 2])),\n+            Arc::new(Int32Array::from(vec![1, 1, 3])),\n+            Arc::new(Int32Array::from(vec![1, 2, 3])),\n+        ],\n+    )?;\n+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;\n+    ctx.register_table(\"t\", Arc::new(provider))?;\n+\n+    let sql = \"SELECT g1, g2, COUNT(DISTINCT b) AS db, COUNT(DISTINCT c) AS dc \\\n+               FROM t GROUP BY g1, g2\";\n+    let batches = ctx.sql(sql).await?.collect().await?;\n+    let out = batches_to_sort_string(&batches);\n+\n+    assert_eq!(\n+        out,\n+        \"+----+----+----+----+\\n\\\n+         | g1 | g2 | db | dc |\\n\\\n+         +----+----+----+----+\\n\\\n+         | 1  | 1  | 1  | 2  |\\n\\\n+         | 1  | 2  | 1  | 1  |\\n\\\n+         +----+----+----+----+\"\n+    );\n+    Ok(())\n+}\n+\n+/// `COUNT(DISTINCT lower(b))` with `'Abc'` / `'aBC'`: distinct is on the **lowered** value (one bucket).\n+/// Two `COUNT(DISTINCT …)` so the rewrite applies; semantics match plain aggregation.\n+#[tokio::test]\n+async fn multi_count_distinct_lower_matches_expected_case_collapsing() -> Result<()> {\n+    let ctx = session_with_multi_distinct_count_rewrite();\n+    let schema = Arc::new(Schema::new(vec![\n+        Field::new(\"g\", DataType::Int32, false),\n+        Field::new(\"b\", DataType::Utf8, false),\n+        Field::new(\"c\", DataType::Utf8, false),\n+    ]));\n+    let batch = RecordBatch::try_new(\n+        schema.clone(),\n+        vec![\n+            Arc::new(Int32Array::from(vec![1, 1])),\n+            Arc::new(StringArray::from(vec![\"Abc\", \"aBC\"])),\n+            Arc::new(StringArray::from(vec![\"x\", \"y\"])),\n+        ],\n+    )?;\n+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;\n+    ctx.register_table(\"t\", Arc::new(provider))?;\n+\n+    let sql = \"SELECT g, COUNT(DISTINCT lower(b)) AS lb, COUNT(DISTINCT c) AS cc \\\n+               FROM t GROUP BY g\";\n+    let batches = ctx.sql(sql).await?.collect().await?;\n+    let out = batches_to_sort_string(&batches);\n+\n+    assert_eq!(\n+        out,\n+        \"+---+----+----+\\n\\\n+         | g | lb | cc |\\n\\\n+         +---+----+----+\\n\\\n+         | 1 | 1  | 2  |\\n\\\n+         +---+----+----+\"\n+    );\n+    Ok(())\n+}\n+\n+/// `COUNT(DISTINCT CAST(x AS INT))` with `1.2` and `1.3`: both truncate to `1` → one distinct.\n+/// Exercises the same “expression in distinct, not raw column” path as `CAST` in the rule.\n+#[tokio::test]\n+async fn multi_count_distinct_cast_float_to_int_collapses_nearby_values() -> Result<()> {\n+    let ctx = session_with_multi_distinct_count_rewrite();\n+    let schema = Arc::new(Schema::new(vec![\n+        Field::new(\"g\", DataType::Int32, false),\n+        Field::new(\"x\", DataType::Float64, false),\n+        Field::new(\"y\", DataType::Float64, false),\n+    ]));\n+    let batch = RecordBatch::try_new(\n+        schema.clone(),\n+        vec![\n+            Arc::new(Int32Array::from(vec![1, 1])),\n+            Arc::new(Float64Array::from(vec![1.2, 1.3])),\n+            Arc::new(Float64Array::from(vec![10.0, 20.0])),\n+        ],\n+    )?;\n+    let provider = MemTable::try_new(schema, vec![vec![batch]])?;\n+    ctx.register_table(\"t\", Arc::new(provider))?;\n+\n+    let sql = \"SELECT g, COUNT(DISTINCT CAST(x AS INT)) AS cx, COUNT(DISTINCT CAST(y AS INT)) AS cy \\\n+               FROM t GROUP BY g\";\n+    let batches = ctx.sql(sql).await?.collect().await?;\n+    let out = batches_to_sort_string(&batches);\n+\n+    assert_eq!(\n+        out,\n+        \"+---+----+----+\\n\\\n+         | g | cx | cy |\\n\\\n+         +---+----+----+\\n\\\n+         | 1 | 1  | 2  |\\n\\\n+         +---+----+----+\"\n+    );\n+    Ok(())\n+}\n@@ -59,6 +59,7 @@ pub mod eliminate_outer_join;\n pub mod extract_equijoin_predicate;\n pub mod extract_leaf_expressions;\n pub mod filter_null_join_keys;\n+pub mod multi_distinct_count_rewrite;\n pub mod optimize_projections;\n pub mod optimize_unions;\n pub mod optimizer;\n@@ -0,0 +1,641 @@\n+// Licensed to the Apache Software Foundation (ASF) under one\n+// or more contributor license agreements.  See the NOTICE file\n+// distributed with this work for additional information\n+// regarding copyright ownership.  The ASF licenses this file\n+// to you under the Apache License, Version 2.0 (the\n+// \"License\"); you may not use this file except in compliance\n+// with the License.  You may obtain a copy of the License at\n+//\n+//   http://www.apache.org/licenses/LICENSE-2.0\n+//\n+// Unless required by applicable law or agreed to in writing,\n+// software distributed under the License is distributed on an\n+// \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n+// KIND, either express or implied.  See the License for the\n+// specific language governing permissions and limitations\n+// under the License.\n+\n+//! Rewrites a single [`Aggregate`] that contains multiple `COUNT(DISTINCT ...)`\n+//! into a join of smaller aggregates so each distinct is computed with one\n+//! accumulator set, reducing peak memory for high-cardinality distincts.\n+\n+use std::sync::Arc;\n+\n+use crate::optimizer::ApplyOrder;\n+use crate::{OptimizerConfig, OptimizerRule};\n+\n+use datafusion_common::{\n+    Column, JoinConstraint, NullEquality, Result, internal_err, tree_node::Transformed,\n+};\n+use datafusion_expr::builder::project;\n+use datafusion_expr::expr::{AggregateFunction, AggregateFunctionParams, ScalarFunction};\n+use datafusion_expr::logical_plan::{\n+    Aggregate, Join, JoinType, LogicalPlan, SubqueryAlias,\n+};\n+use datafusion_expr::{Expr, col, lit, logical_plan::LogicalPlanBuilder};\n+\n+const MAX_DISTINCT_REWRITE_BRANCHES: usize = 8;\n+\n+/// Optimizer rule: multiple `COUNT(DISTINCT ...)` → join of per-distinct sub-aggregates.\n+#[derive(Default, Debug)]\n+pub struct MultiDistinctCountRewrite {}\n+\n+impl MultiDistinctCountRewrite {\n+    /// Create a new rule instance.\n+    pub fn new() -> Self {\n+        Self {}\n+    }\n+\n+    fn is_simple_count_distinct(\n+        e: &Expr,\n+    ) -> Option<(Arc<datafusion_expr::AggregateUDF>, Expr)> {\n+        if let Expr::AggregateFunction(AggregateFunction { func, params }) = e {\n+            let AggregateFunctionParams {\n+                distinct,\n+                args,\n+                filter,\n+                order_by,\n+                ..\n+            } = &params;\n+            if func.name().eq_ignore_ascii_case(\"count\")\n+                && *distinct\n+                && args.len() == 1\n+                && filter.is_none()\n+                && order_by.is_empty()\n+            {\n+                let arg = args.first().cloned()?;\n+                if Self::is_safe_distinct_arg(&arg) {\n+                    return Some((Arc::clone(func), arg));\n+                }\n+            }\n+        }\n+        None\n+    }\n+\n+    fn is_safe_distinct_arg(e: &Expr) -> bool {\n+        if e.is_volatile() {\n+            return false;\n+        }\n+        match e {\n+            Expr::Column(_) => true,\n+            Expr::ScalarFunction(ScalarFunction { func, args }) => {\n+                matches!(func.name().to_ascii_lowercase().as_str(), \"lower\" | \"upper\")\n+                    && args.len() == 1\n+                    && matches!(args.first(), Some(Expr::Column(_)))\n+            }\n+            Expr::Cast(cast) => matches!(cast.expr.as_ref(), Expr::Column(_)),\n+            _ => false,\n+        }\n+    }\n+\n+    fn is_simple_group_expr(e: &Expr) -> bool {\n+        matches!(e, Expr::Column(_))\n+    }\n+\n+    fn contains_grouping_set(group_expr: &[Expr]) -> bool {\n+        group_expr\n+            .first()\n+            .is_some_and(|e| matches!(e, Expr::GroupingSet(_)))\n+    }\n+}\n+\n+impl OptimizerRule for MultiDistinctCountRewrite {\n+    fn name(&self) -> &str {\n+        \"multi_distinct_count_rewrite\"\n+    }\n+\n+    fn apply_order(&self) -> Option<ApplyOrder> {\n+        Some(ApplyOrder::BottomUp)\n+    }\n+\n+    fn rewrite(\n+        &self,\n+        plan: LogicalPlan,\n+        config: &dyn OptimizerConfig,\n+    ) -> Result<Transformed<LogicalPlan>> {\n+        if !config\n+            .options()\n+            .optimizer\n+            .enable_multi_distinct_count_rewrite\n+        {\n+            return Ok(Transformed::no(plan));\n+        }\n+\n+        let LogicalPlan::Aggregate(Aggregate {\n+            input,\n+            aggr_expr,\n+            schema,\n+            group_expr,\n+            ..\n+        }) = plan\n+        else {\n+            return Ok(Transformed::no(plan));\n+        };\n+\n+        if Self::contains_grouping_set(&group_expr) {\n+            return Ok(Transformed::no(LogicalPlan::Aggregate(Aggregate::try_new(\n+                input, group_expr, aggr_expr,\n+            )?)));\n+        }\n+\n+        if !group_expr.iter().all(Self::is_simple_group_expr) {\n+            return Ok(Transformed::no(LogicalPlan::Aggregate(Aggregate::try_new(\n+                input, group_expr, aggr_expr,\n+            )?)));\n+        }\n+\n+        let group_size = group_expr.len();\n+        let mut distinct_list: Vec<(Expr, usize, Arc<datafusion_expr::AggregateUDF>)> =\n+            vec![];\n+        let mut other_list: Vec<(Expr, usize)> = vec![];\n+\n+        for (i, e) in aggr_expr.iter().enumerate() {\n+            if let Some((func, arg)) = Self::is_simple_count_distinct(e) {\n+                distinct_list.push((arg, group_size + i, func));\n+            } else {\n+                other_list.push((e.clone(), group_size + i));\n+            }\n+        }\n+\n+        if distinct_list.len() < 2 {\n+            return Ok(Transformed::no(LogicalPlan::Aggregate(Aggregate::try_new(\n+                input, group_expr, aggr_expr,\n+            )?)));\n+        }\n+\n+        if distinct_list.len() > MAX_DISTINCT_REWRITE_BRANCHES {\n+            return Ok(Transformed::no(LogicalPlan::Aggregate(Aggregate::try_new(\n+                input, group_expr, aggr_expr,\n+            )?)));\n+        }\n+\n+        {\n+            use std::collections::HashSet;\n+            let mut seen: HashSet<&Expr> = HashSet::new();\n+            for (arg, _, _) in distinct_list.iter() {\n+                if !seen.insert(arg) {\n+                    return Ok(Transformed::no(LogicalPlan::Aggregate(\n+                        Aggregate::try_new(input, group_expr, aggr_expr)?,\n+                    )));\n+                }\n+            }\n+        }\n+\n+        let count_udaf = Arc::clone(&distinct_list[0].2);\n+\n+        let count_star = Expr::AggregateFunction(AggregateFunction::new_udf(\n+            Arc::clone(&count_udaf),\n+            vec![lit(1i64)],\n+            false,\n+            None,\n+            vec![],\n+            None,\n+        ))\n+        .alias(\"_cnt\");\n+\n+        let base_aggr_exprs: Vec<Expr> = other_list\n+            .iter()\n+            .map(|(e, schema_idx)| {\n+                let (q, f) = schema.qualified_field(*schema_idx);\n+                e.clone().alias_qualified(q.cloned(), f.name())\n+            })\n+            .collect();\n+\n+        // `Aggregate` must have at least one of grouping exprs or aggregate exprs.\n+        // Global multi-`COUNT(DISTINCT)` (no GROUP BY, no other aggs) has neither — skip a base node.\n+        let base_plan_opt: Option<Arc<LogicalPlan>> =\n+            if group_expr.is_empty() && other_list.is_empty() {\n+                None\n+            } else {\n+                let base_plan = LogicalPlan::Aggregate(Aggregate::try_new(\n+                    Arc::clone(&input),\n+                    group_expr.clone(),\n+                    base_aggr_exprs,\n+                )?);\n+                let base_alias = config.alias_generator().next(\"mdc_base\");\n+                Some(Arc::new(LogicalPlan::SubqueryAlias(\n+                    SubqueryAlias::try_new(Arc::new(base_plan), &base_alias)?,\n+                )))\n+            };\n+\n+        let mut current = base_plan_opt;\n+\n+        for (distinct_arg, schema_aggr_idx, _) in distinct_list.iter() {\n+            // COUNT(DISTINCT x) ignores NULLs; filter before grouping by x.\n+            let filtered_input = LogicalPlanBuilder::from(input.as_ref().clone())\n+                .filter(distinct_arg.clone().is_not_null())?\n+                .build()?;\n+\n+            let inner_group: Vec<Expr> = group_expr\n+                .iter()\n+                .cloned()\n+                .chain(std::iter::once(distinct_arg.clone()))\n+                .collect();\n+            let inner_agg = LogicalPlan::Aggregate(Aggregate::try_new(\n+                Arc::new(filtered_input),\n+                inner_group,\n+                vec![count_star.clone()],\n+            )?);\n+\n+            let (_, field) = schema.qualified_field(*schema_aggr_idx);\n+            let outer_name = field.name().clone();\n+            let outer_aggr = Expr::AggregateFunction(AggregateFunction::new_udf(\n+                Arc::clone(&count_udaf),\n+                vec![col(\"_cnt\")],\n+                false,\n+                None,\n+                vec![],\n+                None,\n+            ))\n+            .alias(outer_name.clone());\n+\n+            let branch_plan = LogicalPlan::Aggregate(Aggregate::try_new(\n+                Arc::new(inner_agg),\n+                group_expr.clone(),\n+                vec![outer_aggr],\n+            )?);\n+\n+            let alias_name = config.alias_generator().next(\"mdc_d\");\n+            let branch_aliased = LogicalPlan::SubqueryAlias(SubqueryAlias::try_new(\n+                Arc::new(branch_plan),\n+                &alias_name,\n+            )?);\n+\n+            current = match current {\n+                None => Some(Arc::new(branch_aliased)),\n+                Some(prev) => {\n+                    let left_schema = prev.schema();\n+                    let right_schema = branch_aliased.schema();\n+                    let join_keys: Vec<(Expr, Expr)> = (0..group_size)\n+                        .map(|i| {\n+                            let (lq, lf) = left_schema.qualified_field(i);\n+                            let (rq, rf) = right_schema.qualified_field(i);\n+                            (\n+                                Expr::Column(Column::new(lq.cloned(), lf.name())),\n+                                Expr::Column(Column::new(rq.cloned(), rf.name())),\n+                            )\n+                        })\n+                        .collect();\n+\n+                    let join = Join::try_new(\n+                        prev,\n+                        Arc::new(branch_aliased),\n+                        join_keys,\n+                        None,\n+                        JoinType::Inner,\n+                        JoinConstraint::On,\n+                        NullEquality::NullEqualsNothing,\n+                        false,\n+                    )?;\n+                    Some(Arc::new(LogicalPlan::Join(join)))\n+                }\n+            };\n+        }\n+\n+        let current =\n+            current.expect(\"distinct_list non-empty implies at least one branch\");\n+        let join_schema = current.schema();\n+\n+        let base_field_count = group_size + other_list.len();\n+\n+        let mut proj_exprs: Vec<Expr> = vec![];\n+        for i in 0..group_size {\n+            let (q, f) = schema.qualified_field(i);\n+            let orig_name = f.name();\n+            let (join_q, join_f) = join_schema.qualified_field(i);\n+            let c = Expr::Column(Column::new(join_q.cloned(), join_f.name()));\n+            proj_exprs.push(c.alias_qualified(q.cloned(), orig_name));\n+        }\n+        // Preserve original aggregate column order (distinct and non-distinct may be interleaved).\n+        for aggr_i in 0..aggr_expr.len() {\n+            let schema_idx = group_size + aggr_i;\n+            let (q, f) = schema.qualified_field(schema_idx);\n+            let orig_name = f.name();\n+\n+            if let Some((dist_idx, (_, _, _))) = distinct_list\n+                .iter()\n+                .enumerate()\n+                .find(|(_, (_, idx, _))| *idx == schema_idx)\n+            {\n+                let branch_start_idx = base_field_count + dist_idx * (group_size + 1);\n+                let branch_aggr_idx = branch_start_idx + group_size;\n+                let (join_q, join_f) = join_schema.qualified_field(branch_aggr_idx);\n+                let c = Expr::Column(Column::new(join_q.cloned(), join_f.name()));\n+                proj_exprs.push(c.alias_qualified(q.cloned(), orig_name));\n+            } else if let Some((other_idx, _)) = other_list\n+                .iter()\n+                .enumerate()\n+                .find(|(_, (_, idx))| *idx == schema_idx)\n+            {\n+                let join_idx = group_size + other_idx;\n+                let (join_q, join_f) = join_schema.qualified_field(join_idx);\n+                let c = Expr::Column(Column::new(join_q.cloned(), join_f.name()));\n+                proj_exprs.push(c.alias_qualified(q.cloned(), orig_name));\n+            } else {\n+                return internal_err!(\n+                    \"aggregate index {aggr_i} (schema index {schema_idx}) is neither distinct nor other\"\n+                );\n+            }\n+        }\n+\n+        let out = project((*current).clone(), proj_exprs)?;\n+        Ok(Transformed::yes(out))\n+    }\n+}\n+\n+#[cfg(test)]\n+mod tests {\n+    use super::*;\n+    use crate::Optimizer;\n+    use crate::OptimizerContext;\n+    use crate::OptimizerRule;\n+    use crate::test::*;\n+    use arrow::datatypes::DataType;\n+    use datafusion_expr::GroupingSet;\n+    use datafusion_expr::LogicalPlan;\n+    use datafusion_expr::expr_fn::cast;\n+    use datafusion_expr::logical_plan::Aggregate;\n+    use datafusion_expr::logical_plan::builder::LogicalPlanBuilder;\n+    use datafusion_expr::{Expr, col};\n+    use datafusion_functions_aggregate::expr_fn::{count, count_distinct};\n+\n+    fn optimize_with_rule_config(\n+        plan: LogicalPlan,\n+        rule: Arc<dyn OptimizerRule + Send + Sync>,\n+        enable_multi_distinct_count_rewrite: bool,\n+    ) -> Result<LogicalPlan> {\n+        Optimizer::with_rules(vec![rule]).optimize(\n+            plan,\n+            &OptimizerContext::new().with_enable_multi_distinct_count_rewrite(\n+                enable_multi_distinct_count_rewrite,\n+            ),\n+            |_, _| {},\n+        )\n+    }\n+\n+    fn optimize_with_rule(\n+        plan: LogicalPlan,\n+        rule: Arc<dyn OptimizerRule + Send + Sync>,\n+    ) -> Result<LogicalPlan> {\n+        optimize_with_rule_config(plan, rule, true)\n+    }\n+\n+    #[test]\n+    fn rewrites_two_count_distinct() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![count_distinct(col(\"b\")), count_distinct(col(\"c\"))],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(s.contains(\"Inner Join\"), \"expected join rewrite, got:\\n{s}\");\n+        assert!(\n+            s.contains(\"Filter: test.b IS NOT NULL\"),\n+            \"expected null filter on b, got:\\n{s}\"\n+        );\n+        assert!(\n+            s.contains(\"Filter: test.c IS NOT NULL\"),\n+            \"expected null filter on c, got:\\n{s}\"\n+        );\n+        assert!(\n+            s.contains(\"SubqueryAlias: mdc_base\"),\n+            \"expected base alias, got:\\n{s}\"\n+        );\n+        assert!(\n+            s.matches(\"SubqueryAlias: mdc_d\").count() >= 2,\n+            \"expected distinct branches, got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn rewrites_global_three_count_distinct() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                Vec::<Expr>::new(),\n+                vec![\n+                    count_distinct(col(\"a\")),\n+                    count_distinct(col(\"b\")),\n+                    count_distinct(col(\"c\")),\n+                ],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(\n+            s.contains(\"Cross Join\") || s.contains(\"Inner Join\"),\n+            \"expected join rewrite for global multi-distinct, got:\\n{s}\"\n+        );\n+        assert!(\n+            !s.contains(\"mdc_base\"),\n+            \"global-only rewrite should not use mdc_base, got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    /// Grouped query with multiple `COUNT(DISTINCT …)` **and** non-distinct aggregates (typical BI).\n+    /// Non-distinct aggs live in `mdc_base`; each distinct column gets a branch + join on keys.\n+    #[test]\n+    fn rewrites_two_count_distinct_with_non_distinct_count() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![\n+                    count_distinct(col(\"b\")),\n+                    count_distinct(col(\"c\")),\n+                    count(col(\"a\")),\n+                ],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(s.contains(\"Inner Join\"), \"expected join rewrite, got:\\n{s}\");\n+        assert!(\n+            s.contains(\"SubqueryAlias: mdc_base\"),\n+            \"expected base aggregate for non-distinct aggs, got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn does_not_rewrite_two_count_distinct_same_column() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![\n+                    count_distinct(col(\"b\")).alias(\"cd1\"),\n+                    count_distinct(col(\"b\")).alias(\"cd2\"),\n+                ],\n+            )?\n+            .build()?;\n+        let before = plan.display_indent_schema().to_string();\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let after = optimized.display_indent_schema().to_string();\n+        assert_eq!(before, after);\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn does_not_rewrite_single_count_distinct() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(vec![col(\"a\")], vec![count_distinct(col(\"b\"))])?\n+            .build()?;\n+        let before = plan.display_indent_schema().to_string();\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let after = optimized.display_indent_schema().to_string();\n+        assert_eq!(before, after);\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn rewrites_three_count_distinct_grouped() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![\n+                    count_distinct(col(\"b\")),\n+                    count_distinct(col(\"c\")),\n+                    count_distinct(col(\"a\")),\n+                ],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(\n+            s.matches(\"Inner Join\").count() >= 2,\n+            \"expected two joins for three branches, got:\\n{s}\"\n+        );\n+        assert!(\n+            s.contains(\"SubqueryAlias: mdc_base\"),\n+            \"expected base aggregate, got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn rewrites_interleaved_non_distinct_between_distincts() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![\n+                    count_distinct(col(\"b\")),\n+                    count(col(\"a\")),\n+                    count_distinct(col(\"c\")),\n+                ],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(s.contains(\"Inner Join\"), \"expected join rewrite, got:\\n{s}\");\n+        assert!(\n+            s.contains(\"SubqueryAlias: mdc_base\"),\n+            \"expected base for middle count(a), got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn rewrites_count_distinct_on_cast_exprs() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![\n+                    count_distinct(cast(col(\"b\"), DataType::Int64)),\n+                    count_distinct(cast(col(\"c\"), DataType::Int64)),\n+                ],\n+            )?\n+            .build()?;\n+\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let s = optimized.display_indent_schema().to_string();\n+        assert!(s.contains(\"Inner Join\"), \"expected join rewrite, got:\\n{s}\");\n+        assert!(\n+            s.contains(\"Filter: CAST(test.b AS Int64) IS NOT NULL\"),\n+            \"expected null filter on cast(b), got:\\n{s}\"\n+        );\n+        assert!(\n+            s.contains(\"Filter: CAST(test.c AS Int64) IS NOT NULL\"),\n+            \"expected null filter on cast(c), got:\\n{s}\"\n+        );\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn does_not_rewrite_grouping_sets_multi_distinct() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let group_expr = vec![Expr::GroupingSet(GroupingSet::GroupingSets(vec![vec![\n+            col(\"a\"),\n+        ]]))];\n+        let aggr_expr = vec![count_distinct(col(\"b\")), count_distinct(col(\"c\"))];\n+        let plan = LogicalPlan::Aggregate(Aggregate::try_new(\n+            Arc::new(table_scan),\n+            group_expr,\n+            aggr_expr,\n+        )?);\n+        let before = plan.display_indent_schema().to_string();\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let after = optimized.display_indent_schema().to_string();\n+        assert_eq!(before, after);\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn skips_rewrite_when_config_disabled() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![count_distinct(col(\"b\")), count_distinct(col(\"c\"))],\n+            )?\n+            .build()?;\n+        let before = plan.display_indent_schema().to_string();\n+        let optimized = optimize_with_rule_config(\n+            plan,\n+            Arc::new(MultiDistinctCountRewrite::new()),\n+            false,\n+        )?;\n+        assert_eq!(before, optimized.display_indent_schema().to_string());\n+        Ok(())\n+    }\n+\n+    #[test]\n+    fn does_not_rewrite_mixed_agg() -> Result<()> {\n+        let table_scan = test_table_scan()?;\n+        let plan = LogicalPlanBuilder::from(table_scan)\n+            .aggregate(\n+                vec![col(\"a\")],\n+                vec![count_distinct(col(\"b\")), count(col(\"c\"))],\n+            )?\n+            .build()?;\n+        let before = plan.display_indent_schema().to_string();\n+        let optimized =\n+            optimize_with_rule(plan, Arc::new(MultiDistinctCountRewrite::new()))?;\n+        let after = optimized.display_indent_schema().to_string();\n+        assert_eq!(before, after);\n+        Ok(())\n+    }\n+}\n@@ -45,6 +45,7 @@ use crate::eliminate_outer_join::EliminateOuterJoin;\n use crate::extract_equijoin_predicate::ExtractEquijoinPredicate;\n use crate::extract_leaf_expressions::{ExtractLeafExpressions, PushDownLeafProjections};\n use crate::filter_null_join_keys::FilterNullJoinKeys;\n+use crate::multi_distinct_count_rewrite::MultiDistinctCountRewrite;\n use crate::optimize_projections::OptimizeProjections;\n use crate::optimize_unions::OptimizeUnions;\n use crate::plan_signature::LogicalPlanSignature;\n@@ -217,6 +218,14 @@ impl OptimizerContext {\n         Arc::make_mut(&mut self.options).optimizer.max_passes = v as usize;\n         self\n     }\n+\n+    /// Enable [`crate::multi_distinct_count_rewrite::MultiDistinctCountRewrite`] (default off).\n+    pub fn with_enable_multi_distinct_count_rewrite(mut self, enable: bool) -> Self {\n+        Arc::make_mut(&mut self.options)\n+            .optimizer\n+            .enable_multi_distinct_count_rewrite = enable;\n+        self\n+    }\n }\n \n impl Default for OptimizerContext {\n@@ -298,6 +307,7 @@ impl Optimizer {\n             Arc::new(PushDownLimit::new()),\n             Arc::new(PushDownFilter::new()),\n             Arc::new(SingleDistinctToGroupBy::new()),\n+            Arc::new(MultiDistinctCountRewrite::new()),\n             // The previous optimizations added expressions and projections,\n             // that might benefit from the following rules\n             Arc::new(EliminateGroupByConstant::new()),\n@@ -144,6 +144,7 @@ The following configuration settings are available:\n | datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown           | true                      | When set to true, the optimizer will attempt to push down Aggregate dynamic filters into the file scan phase.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |\n | datafusion.optimizer.enable_dynamic_filter_pushdown                     | true                      | When set to true attempts to push down dynamic filters generated by operators (TopK, Join & Aggregate) into the file scan phase. For example, for a query such as `SELECT * FROM t ORDER BY timestamp DESC LIMIT 10`, the optimizer will attempt to push down the current top 10 timestamps that the TopK operator references into the file scans. This means that if we already have 10 timestamps in the year 2025 any files that only have timestamps in the year 2024 can be skipped / pruned at various stages in the scan. The config will suppress `enable_join_dynamic_filter_pushdown`, `enable_topk_dynamic_filter_pushdown` & `enable_aggregate_dynamic_filter_pushdown` So if you disable `enable_topk_dynamic_filter_pushdown`, then enable `enable_dynamic_filter_pushdown`, the `enable_topk_dynamic_filter_pushdown` will be overridden.                                                                                                                                                                                                                                                                                                                                                                                     |\n | datafusion.optimizer.filter_null_join_keys                              | false                     | When set to true, the optimizer will insert filters before a join between a nullable and non-nullable column to filter out nulls on the nullable side. This filter can add additional overhead when the file format does not fully support predicate push down.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |\n+| datafusion.optimizer.enable_multi_distinct_count_rewrite                | false                     | When set to true, the optimizer may rewrite a single aggregate with multiple `COUNT(DISTINCT …)` (with `GROUP BY`) into joins of per-distinct sub-aggregates. This can reduce aggregate-state memory in some cases by splitting distincts into separate sub-aggregates, at the cost of additional joins; default off until benchmarks support enabling broadly.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |\n | datafusion.optimizer.repartition_aggregations                           | true                      | Should DataFusion repartition data using the aggregate keys to execute aggregates in parallel using the provided `target_partitions` level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |\n | datafusion.optimizer.repartition_file_min_size                          | 10485760                  | Minimum total files size in bytes to perform file scan repartitioning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |\n | datafusion.optimizer.repartition_joins                                  | true                      | Should DataFusion repartition data using the join keys to execute joins in parallel using the provided `target_partitions` level                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |",
+    "comments": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4102785883",
+        "body": "Hi @ydgandhi !\r\n\r\nThis does seem the same to me as https://github.com/apache/datafusion/pull/20940 ?\r\n\r\nCan you maybe help review that one?",
+        "user": {
+          "login": "Dandandan",
+          "name": "Dandandan",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+          "id": 163737
+        },
+        "id": 4102785883,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T07:47:19Z",
+        "updated_at": "2026-03-21T07:47:19Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/ydgandhi/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/ydgandhi\">@ydgandhi</a> !</p>\n<p dir=\"auto\">This does seem the same to me as <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4075040066\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/20940\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\" href=\"https://github.com/apache/datafusion/pull/20940\">#20940</a> ?</p>\n<p dir=\"auto\">Can you maybe help review that one?</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103001083",
+        "body": "Hi @Dandandan - thanks for this work; the cross-join split for **multiple distinct aggregates with no `GROUP BY`** is a strong fit for workloads like ClickBench extended.\r\n\r\nI’ve been working on a related but **different** pattern: **`GROUP BY` + several `COUNT(DISTINCT …)`** in the same aggregate (typical BI). In that situation, your rule is not quite applicable, because `MultiDistinctToCrossJoin` needs an **empty** `GROUP BY` and **all** aggregates to be distinct on different columns.\r\n\r\nHere is a concrete example from our internal benchmark suite on an `ecommerce_orders` table:\r\n\r\n```sql\r\nSELECT\r\n    seller_name,\r\n    COUNT(*) as total_orders,\r\n    COUNT(DISTINCT delivery_city) as cities_served,\r\n    COUNT(DISTINCT state) as states_served,\r\n    SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) as completed_orders,\r\n    SUM(CASE WHEN order_status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_orders,\r\n    ROUND(100.0 * SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate\r\nFROM ecommerce_orders\r\nGROUP BY seller_name\r\nHAVING COUNT(*) > 100\r\nORDER BY total_orders DESC\r\nLIMIT 100;\r\n```\r\n\r\nThis is **not** “global” multi-distinct: it’s **per `seller_name`**, with **multiple `COUNT(DISTINCT …)`** plus other aggregates. That’s the class my optimizer rule (`MultiDistinctCountRewrite`) targets — rewriting the **`COUNT(DISTINCT …)`** pieces into **joinable sub-aggregates aligned on the same `GROUP BY` keys**, with correct `NULL` handling where needed. For this table with 20m rows, on my M4 machine the times are 0.42s vs ~17s for the implementation in #20940\r\n\r\nIn my opinion, they’re **complementary**: different predicates, different plans, and they can **coexist** in the optimizer pipeline (we’d want to sanity-check rule order so we don’t double-rewrite the same node).\r\n\r\nHappy to align naming, tests, and placement with you and the maintainers.",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4103001083,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T10:13:37Z",
+        "updated_at": "2026-03-21T10:26:28Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> - thanks for this work; the cross-join split for <strong>multiple distinct aggregates with no <code class=\"notranslate\">GROUP BY</code></strong> is a strong fit for workloads like ClickBench extended.</p>\n<p dir=\"auto\">I’ve been working on a related but <strong>different</strong> pattern: <strong><code class=\"notranslate\">GROUP BY</code> + several <code class=\"notranslate\">COUNT(DISTINCT …)</code></strong> in the same aggregate (typical BI). In that situation, your rule is not quite applicable, because <code class=\"notranslate\">MultiDistinctToCrossJoin</code> needs an <strong>empty</strong> <code class=\"notranslate\">GROUP BY</code> and <strong>all</strong> aggregates to be distinct on different columns.</p>\n<p dir=\"auto\">Here is a concrete example from our internal benchmark suite on an <code class=\"notranslate\">ecommerce_orders</code> table:</p>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT\n    seller_name,\n    COUNT(*) as total_orders,\n    COUNT(DISTINCT delivery_city) as cities_served,\n    COUNT(DISTINCT state) as states_served,\n    SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) as completed_orders,\n    SUM(CASE WHEN order_status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_orders,\n    ROUND(100.0 * SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate\nFROM ecommerce_orders\nGROUP BY seller_name\nHAVING COUNT(*) &gt; 100\nORDER BY total_orders DESC\nLIMIT 100;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span>\n    seller_name,\n    <span class=\"pl-c1\">COUNT</span>(<span class=\"pl-k\">*</span>) <span class=\"pl-k\">as</span> total_orders,\n    <span class=\"pl-c1\">COUNT</span>(DISTINCT delivery_city) <span class=\"pl-k\">as</span> cities_served,\n    <span class=\"pl-c1\">COUNT</span>(DISTINCT state) <span class=\"pl-k\">as</span> states_served,\n    <span class=\"pl-c1\">SUM</span>(CASE WHEN order_status <span class=\"pl-k\">=</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>Completed<span class=\"pl-pds\">'</span></span> THEN <span class=\"pl-c1\">1</span> ELSE <span class=\"pl-c1\">0</span> END) <span class=\"pl-k\">as</span> completed_orders,\n    <span class=\"pl-c1\">SUM</span>(CASE WHEN order_status <span class=\"pl-k\">=</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>Cancelled<span class=\"pl-pds\">'</span></span> THEN <span class=\"pl-c1\">1</span> ELSE <span class=\"pl-c1\">0</span> END) <span class=\"pl-k\">as</span> cancelled_orders,\n    ROUND(<span class=\"pl-c1\">100</span>.<span class=\"pl-c1\">0</span> <span class=\"pl-k\">*</span> <span class=\"pl-c1\">SUM</span>(CASE WHEN order_status <span class=\"pl-k\">=</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>Completed<span class=\"pl-pds\">'</span></span> THEN <span class=\"pl-c1\">1</span> ELSE <span class=\"pl-c1\">0</span> END) <span class=\"pl-k\">/</span> <span class=\"pl-c1\">COUNT</span>(<span class=\"pl-k\">*</span>), <span class=\"pl-c1\">2</span>) <span class=\"pl-k\">as</span> success_rate\n<span class=\"pl-k\">FROM</span> ecommerce_orders\n<span class=\"pl-k\">GROUP BY</span> seller_name\n<span class=\"pl-k\">HAVING</span> <span class=\"pl-c1\">COUNT</span>(<span class=\"pl-k\">*</span>) <span class=\"pl-k\">&gt;</span> <span class=\"pl-c1\">100</span>\n<span class=\"pl-k\">ORDER BY</span> total_orders <span class=\"pl-k\">DESC</span>\n<span class=\"pl-k\">LIMIT</span> <span class=\"pl-c1\">100</span>;</pre></div>\n<p dir=\"auto\">This is <strong>not</strong> “global” multi-distinct: it’s <strong>per <code class=\"notranslate\">seller_name</code></strong>, with <strong>multiple <code class=\"notranslate\">COUNT(DISTINCT …)</code></strong> plus other aggregates. That’s the class my optimizer rule (<code class=\"notranslate\">MultiDistinctCountRewrite</code>) targets — rewriting the <strong><code class=\"notranslate\">COUNT(DISTINCT …)</code></strong> pieces into <strong>joinable sub-aggregates aligned on the same <code class=\"notranslate\">GROUP BY</code> keys</strong>, with correct <code class=\"notranslate\">NULL</code> handling where needed. For this table with 20m rows, on my M4 machine the times are 0.42s vs ~17s for the implementation in <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4075040066\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/20940\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\" href=\"https://github.com/apache/datafusion/pull/20940\">#20940</a></p>\n<p dir=\"auto\">In my opinion, they’re <strong>complementary</strong>: different predicates, different plans, and they can <strong>coexist</strong> in the optimizer pipeline (we’d want to sanity-check rule order so we don’t double-rewrite the same node).</p>\n<p dir=\"auto\">Happy to align naming, tests, and placement with you and the maintainers.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2969599296",
+        "body": "Could you simulate a query like  \n\nSELECT g, COUNT(DISTINCT lower(b)), ... GROUP BY g\n\nwhere the values of  b  are 'Abc' and 'aBC'?\n\nI understand that  cast  presents a similar issue. For instance, when casting a double to an int, the original double values might be 1.2 and 1.3.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 2969599296,
+        "pull_request_review_id": 3986050001,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T13:39:00Z",
+        "updated_at": "2026-03-21T13:39:13Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": 153,
+        "start_line": null,
+        "path": "datafusion/optimizer/src/multi_distinct_count_rewrite.rs",
+        "body_html": "<p dir=\"auto\">Could you simulate a query like  </p>\n<p dir=\"auto\">SELECT g, COUNT(DISTINCT lower(b)), ... GROUP BY g</p>\n<p dir=\"auto\">where the values of  b  are 'Abc' and 'aBC'?</p>\n<p dir=\"auto\">I understand that  cast  presents a similar issue. For instance, when casting a double to an int, the original double values might be 1.2 and 1.3.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-3986050001",
+        "body": "",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+          "id": 49781471
+        },
+        "id": 3986050001,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T13:39:13Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103382064",
+        "body": "I personally think this PR is a more generalized rewrite approach. #20940 might cover a limited range of scenarios, but it is more rigorous. Could the current PR add some test cases?",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4103382064,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T13:51:35Z",
+        "updated_at": "2026-03-21T13:51:35Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">I personally think this PR is a more generalized rewrite approach. <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"4075040066\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/20940\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/20940/hovercard\" href=\"https://github.com/apache/datafusion/pull/20940\">#20940</a> might cover a limited range of scenarios, but it is more rigorous. Could the current PR add some test cases?</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103479506",
+        "body": "Thanks for the review. I asked cursor to add a few tests\r\n\r\n---\r\n\r\n## Tests for `MultiDistinctCountRewrite` (what they cover)\r\n\r\nOptimizer unit tests — `datafusion/optimizer/src/multi_distinct_count_rewrite.rs`\r\n\r\n| Test | What it asserts |\r\n|------|-----------------|\r\n| `rewrites_two_count_distinct` | `GROUP BY a` + `COUNT(DISTINCT b)`, `COUNT(DISTINCT c)` → inner joins, per-branch null filters on `b`/`c`, `mdc_base` + two `mdc_d` aliases. |\r\n| `rewrites_global_three_count_distinct` | No `GROUP BY`, three `COUNT(DISTINCT …)` → cross/inner join rewrite; **no** `mdc_base` (global-only path). |\r\n| `rewrites_two_count_distinct_with_non_distinct_count` | Grouped BI-style: two distincts + `COUNT(a)` → join rewrite with **`mdc_base`** holding the non-distinct agg. |\r\n| `does_not_rewrite_two_count_distinct_same_column` | Two `COUNT(DISTINCT b)` with different aliases → **no** rewrite (duplicate distinct key). |\r\n| `does_not_rewrite_single_count_distinct` | Only one `COUNT(DISTINCT …)` → **no** rewrite (rule needs ≥2 distincts). |\r\n| `rewrites_three_count_distinct_grouped` | Three grouped `COUNT(DISTINCT …)` on `b`, `c`, `a` → **two** inner joins + `mdc_base`. |\r\n| `rewrites_interleaved_non_distinct_between_distincts` | Order `COUNT(DISTINCT b)`, `COUNT(a)`, `COUNT(DISTINCT c)` → rewrite + `mdc_base` for the middle non-distinct agg (projection order / interleaving). |\r\n| `rewrites_count_distinct_on_cast_exprs` | `COUNT(DISTINCT CAST(b AS Int64))`, same for `c` → rewrite + null filters on the **cast** expressions. |\r\n| `does_not_rewrite_grouping_sets_multi_distinct` | `GROUPING SETS` aggregate with two `COUNT(DISTINCT …)` → **no** rewrite (rule bails on grouping sets). |\r\n| `does_not_rewrite_mixed_agg` | `COUNT(DISTINCT b)` + `COUNT(c)` → **no** rewrite (only **one** `COUNT(DISTINCT …)`; rule requires at least two). |\r\n\r\nSQL integration — `datafusion/core/tests/sql/aggregates/multi_distinct_count_rewrite.rs`\r\n\r\n| Test | What it asserts |\r\n|------|-----------------|\r\n| `multi_count_distinct_matches_expected_with_nulls` | End-to-end grouped two `COUNT(DISTINCT …)` with **NULLs** in distinct columns; exact sorted batch string vs expected counts. |\r\n| `multi_count_distinct_with_count_star_matches_expected` | `COUNT(*)` plus two `COUNT(DISTINCT …)` per group (BI-style); exact result table. |\r\n| `multi_count_distinct_two_group_keys_matches_expected` | **`GROUP BY g1, g2`** + two distincts; verifies joins line up on **all** group keys and numerics match. |\r\n\r\n---",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4103479506,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T14:46:21Z",
+        "updated_at": "2026-03-21T14:46:21Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Thanks for the review. I asked cursor to add a few tests</p>\n<hr>\n<h2 dir=\"auto\">Tests for <code class=\"notranslate\">MultiDistinctCountRewrite</code> (what they cover)</h2>\n<p dir=\"auto\">Optimizer unit tests — <code class=\"notranslate\">datafusion/optimizer/src/multi_distinct_count_rewrite.rs</code></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Test</th>\n<th>What it asserts</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code class=\"notranslate\">rewrites_two_count_distinct</code></td>\n<td><code class=\"notranslate\">GROUP BY a</code> + <code class=\"notranslate\">COUNT(DISTINCT b)</code>, <code class=\"notranslate\">COUNT(DISTINCT c)</code> → inner joins, per-branch null filters on <code class=\"notranslate\">b</code>/<code class=\"notranslate\">c</code>, <code class=\"notranslate\">mdc_base</code> + two <code class=\"notranslate\">mdc_d</code> aliases.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">rewrites_global_three_count_distinct</code></td>\n<td>No <code class=\"notranslate\">GROUP BY</code>, three <code class=\"notranslate\">COUNT(DISTINCT …)</code> → cross/inner join rewrite; <strong>no</strong> <code class=\"notranslate\">mdc_base</code> (global-only path).</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">rewrites_two_count_distinct_with_non_distinct_count</code></td>\n<td>Grouped BI-style: two distincts + <code class=\"notranslate\">COUNT(a)</code> → join rewrite with <strong><code class=\"notranslate\">mdc_base</code></strong> holding the non-distinct agg.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">does_not_rewrite_two_count_distinct_same_column</code></td>\n<td>Two <code class=\"notranslate\">COUNT(DISTINCT b)</code> with different aliases → <strong>no</strong> rewrite (duplicate distinct key).</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">does_not_rewrite_single_count_distinct</code></td>\n<td>Only one <code class=\"notranslate\">COUNT(DISTINCT …)</code> → <strong>no</strong> rewrite (rule needs ≥2 distincts).</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">rewrites_three_count_distinct_grouped</code></td>\n<td>Three grouped <code class=\"notranslate\">COUNT(DISTINCT …)</code> on <code class=\"notranslate\">b</code>, <code class=\"notranslate\">c</code>, <code class=\"notranslate\">a</code> → <strong>two</strong> inner joins + <code class=\"notranslate\">mdc_base</code>.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">rewrites_interleaved_non_distinct_between_distincts</code></td>\n<td>Order <code class=\"notranslate\">COUNT(DISTINCT b)</code>, <code class=\"notranslate\">COUNT(a)</code>, <code class=\"notranslate\">COUNT(DISTINCT c)</code> → rewrite + <code class=\"notranslate\">mdc_base</code> for the middle non-distinct agg (projection order / interleaving).</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">rewrites_count_distinct_on_cast_exprs</code></td>\n<td><code class=\"notranslate\">COUNT(DISTINCT CAST(b AS Int64))</code>, same for <code class=\"notranslate\">c</code> → rewrite + null filters on the <strong>cast</strong> expressions.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">does_not_rewrite_grouping_sets_multi_distinct</code></td>\n<td><code class=\"notranslate\">GROUPING SETS</code> aggregate with two <code class=\"notranslate\">COUNT(DISTINCT …)</code> → <strong>no</strong> rewrite (rule bails on grouping sets).</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">does_not_rewrite_mixed_agg</code></td>\n<td><code class=\"notranslate\">COUNT(DISTINCT b)</code> + <code class=\"notranslate\">COUNT(c)</code> → <strong>no</strong> rewrite (only <strong>one</strong> <code class=\"notranslate\">COUNT(DISTINCT …)</code>; rule requires at least two).</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\">SQL integration — <code class=\"notranslate\">datafusion/core/tests/sql/aggregates/multi_distinct_count_rewrite.rs</code></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Test</th>\n<th>What it asserts</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code class=\"notranslate\">multi_count_distinct_matches_expected_with_nulls</code></td>\n<td>End-to-end grouped two <code class=\"notranslate\">COUNT(DISTINCT …)</code> with <strong>NULLs</strong> in distinct columns; exact sorted batch string vs expected counts.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">multi_count_distinct_with_count_star_matches_expected</code></td>\n<td><code class=\"notranslate\">COUNT(*)</code> plus two <code class=\"notranslate\">COUNT(DISTINCT …)</code> per group (BI-style); exact result table.</td>\n</tr>\n<tr>\n<td><code class=\"notranslate\">multi_count_distinct_two_group_keys_matches_expected</code></td>\n<td><strong><code class=\"notranslate\">GROUP BY g1, g2</code></strong> + two distincts; verifies joins line up on <strong>all</strong> group keys and numerics match.</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<hr>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2969672012",
+        "body": "Semantics are unchanged, distinct is on the inner expression; we added SQL tests for lower case-folding and CAST collision with two COUNT(DISTINCT …) so the rewrite matches vanilla aggregation.",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 2969672012,
+        "pull_request_review_id": 3986113002,
+        "in_reply_to_id": 2969599296,
+        "created_at": "2026-03-21T14:52:12Z",
+        "updated_at": "2026-03-21T14:52:12Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": 153,
+        "start_line": null,
+        "path": "datafusion/optimizer/src/multi_distinct_count_rewrite.rs",
+        "body_html": "<p dir=\"auto\">Semantics are unchanged, distinct is on the inner expression; we added SQL tests for lower case-folding and CAST collision with two COUNT(DISTINCT …) so the rewrite matches vanilla aggregation.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-3986113002",
+        "body": "",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?u=017fe8692c536a94501577139f23896f142771c7&v=4",
+          "id": 19206585
+        },
+        "id": 3986113002,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-21T14:52:12Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4105715551",
+        "body": "I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys.\r\nSo I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n\r\nI am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.",
+        "user": {
+          "login": "Dandandan",
+          "name": "Dandandan",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+          "id": 163737
+        },
+        "id": 4105715551,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-22T07:19:28Z",
+        "updated_at": "2026-03-22T07:19:28Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys.<br>\nSo I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.</p>\n<p dir=\"auto\">I am also wondering if mostly for memory usage a <code class=\"notranslate\">GroupsAccumulator</code> for distinct count / sum might give similar/more improvements.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4106184220",
+        "body": "> I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> \r\n> I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n\r\n@Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4106184220,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-22T12:32:47Z",
+        "updated_at": "2026-03-22T12:32:47Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<blockquote>\n<p dir=\"auto\">I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.</p>\n<p dir=\"auto\">I am also wondering if mostly for memory usage a <code class=\"notranslate\">GroupsAccumulator</code> for distinct count / sum might give similar/more improvements.</p>\n</blockquote>\n<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4108104692",
+        "body": "Thanks @Dandandan @xiedeyantu for the discussion.\r\n\r\n**Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n\r\n**Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n\r\n**GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n\r\n**Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n\r\n> > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> \r\n> @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4108104692,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-23T05:28:02Z",
+        "updated_at": "2026-03-23T05:28:02Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Thanks <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a> for the discussion.</p>\n<p dir=\"auto\"><strong>Join cost / default behavior:</strong> Agreed that joining on grouping keys isn’t free. We’ve added <strong><code class=\"notranslate\">datafusion.optimizer.enable_multi_distinct_count_rewrite</code></strong> with default <strong><code class=\"notranslate\">false</code></strong>, so the rewrite is <strong>opt-in</strong> until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.</p>\n<p dir=\"auto\"><strong>Benchmarks:</strong> We’re aligned that we should measure <strong>latency and memory</strong> vs baseline across scenarios (e.g. multiple <code class=\"notranslate\">COUNT(DISTINCT …)</code> with <code class=\"notranslate\">GROUP BY</code>, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.</p>\n<p dir=\"auto\"><strong>GroupsAccumulator / execution-layer improvements:</strong> That work is complementary: better distinct accumulators help <strong>how</strong> each aggregate runs; this rule changes <strong>logical plan shape</strong> when several large distincts share one aggregate. Both can coexist on the roadmap.</p>\n<p dir=\"auto\"><strong>Tests:</strong> We added optimizer + SQL integration coverage (including cases with <code class=\"notranslate\">lower</code>/<code class=\"notranslate\">CAST</code> inside <code class=\"notranslate\">COUNT(DISTINCT …)</code> and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.</p>\n<blockquote>\n<blockquote>\n<p dir=\"auto\">I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.<br>\nI am also wondering if mostly for memory usage a <code class=\"notranslate\">GroupsAccumulator</code> for distinct count / sum might give similar/more improvements.</p>\n</blockquote>\n<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.</p>\n</blockquote>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4109532126",
+        "body": "\r\nYes, I can see it would improve a lot of queries \r\n\r\n> Thanks @Dandandan @xiedeyantu for the discussion.\r\n> \r\n> **Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n> \r\n> **Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n> \r\n> **GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n> \r\n> **Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n> \r\n> > > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> > \r\n> > \r\n> > @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n\r\nSounds good - agreed.",
+        "user": {
+          "login": "Dandandan",
+          "name": "Dandandan",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+          "id": 163737
+        },
+        "id": 4109532126,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-23T10:23:35Z",
+        "updated_at": "2026-03-23T10:23:35Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Yes, I can see it would improve a lot of queries</p>\n<blockquote>\n<p dir=\"auto\">Thanks <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a> for the discussion.</p>\n<p dir=\"auto\"><strong>Join cost / default behavior:</strong> Agreed that joining on grouping keys isn’t free. We’ve added <strong><code class=\"notranslate\">datafusion.optimizer.enable_multi_distinct_count_rewrite</code></strong> with default <strong><code class=\"notranslate\">false</code></strong>, so the rewrite is <strong>opt-in</strong> until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.</p>\n<p dir=\"auto\"><strong>Benchmarks:</strong> We’re aligned that we should measure <strong>latency and memory</strong> vs baseline across scenarios (e.g. multiple <code class=\"notranslate\">COUNT(DISTINCT …)</code> with <code class=\"notranslate\">GROUP BY</code>, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.</p>\n<p dir=\"auto\"><strong>GroupsAccumulator / execution-layer improvements:</strong> That work is complementary: better distinct accumulators help <strong>how</strong> each aggregate runs; this rule changes <strong>logical plan shape</strong> when several large distincts share one aggregate. Both can coexist on the roadmap.</p>\n<p dir=\"auto\"><strong>Tests:</strong> We added optimizer + SQL integration coverage (including cases with <code class=\"notranslate\">lower</code>/<code class=\"notranslate\">CAST</code> inside <code class=\"notranslate\">COUNT(DISTINCT …)</code> and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.</p>\n<blockquote>\n<blockquote>\n<p dir=\"auto\">I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.<br>\nI am also wondering if mostly for memory usage a <code class=\"notranslate\">GroupsAccumulator</code> for distinct count / sum might give similar/more improvements.</p>\n</blockquote>\n<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.</p>\n</blockquote>\n</blockquote>\n<p dir=\"auto\">Sounds good - agreed.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4110284239",
+        "body": "Following up with additional real-data benchmark results for `MultiDistinctCountRewrite` (config-gated by `datafusion.optimizer.enable_multi_distinct_count_rewrite`, default `false`).\r\n\r\n## Dataset generation / setup\r\n\r\nI used local TPCH SF1 parquet generated with:\r\n\r\n```bash\r\ncargo install tpchgen-cli\r\ntpchgen-cli --scale-factor 1 --format parquet --parquet-compression 'ZSTD(1)' --parts 1 --output-dir benchmarks/data/tpch_sf1\r\n```\r\n\r\nData path used in all queries:\r\n`benchmarks/data/tpch_sf1/lineitem/*.parquet`\r\n\r\nFor timing/memory, each run used:\r\n\r\n```bash\r\n/usr/bin/time -l datafusion-cli -q --format csv -c \"SET datafusion.optimizer.enable_multi_distinct_count_rewrite = <true|false>;\" -c \"<QUERY>\"\r\n```\r\n\r\n(Reporting wall time + max RSS from `time -l`.)\r\n\r\n## Queries tested\r\n\r\n### Scenario 1: 3 distincts (grouped)\r\n\r\n```sql\r\nSELECT SUM(d1) AS s1, SUM(d2) AS s2, SUM(d3) AS s3\r\nFROM (\r\n  SELECT l_suppkey,\r\n         COUNT(DISTINCT l_orderkey) AS d1,\r\n         COUNT(DISTINCT l_partkey) AS d2,\r\n         COUNT(DISTINCT l_linenumber) AS d3\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_suppkey\r\n);\r\n```\r\n\r\n### Scenario 2: CAST-based distincts\r\n\r\n```sql\r\nSELECT SUM(cx) AS sx, SUM(cy) AS sy\r\nFROM (\r\n  SELECT l_suppkey,\r\n         COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n         COUNT(DISTINCT CAST(l_discount * 100 AS INT)) AS cy\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_suppkey\r\n);\r\n```\r\n\r\n### Scenario 3: lower() + string distinct\r\n\r\n```sql\r\nSELECT SUM(c1) AS s1, SUM(c2) AS s2\r\nFROM (\r\n  SELECT l_returnflag,\r\n         COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n         COUNT(DISTINCT l_shipinstruct) AS c2\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_returnflag\r\n);\r\n```\r\n\r\n## Results (latency + max RSS)\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|---|---:|---:|---|\r\n| 1) three distincts | 0.28s, ~570 MB | 0.12s, ~730 MB | Faster, higher memory |\r\n| 2) cast-based distincts | 0.17s, ~349 MB | 0.16s, ~350 MB | Near tie |\r\n| 3) lower()+string distinct | 0.04s, ~99 MB | 0.06s, ~94 MB | Slightly slower, slightly lower memory |\r\n\r\nAll paired runs returned identical query results.\r\n\r\n## Takeaway\r\n\r\nThe rewrite can improve latency in some multi-distinct grouped cases, but can also increase peak memory and/or be neutral/slightly slower depending on cardinality and expression shape. Keeping this rule opt-in (default off) remains appropriate while we expand benchmark coverage.\r\n\r\n\r\n\r\n> Yes, I can see it would improve a lot of queries\r\n> \r\n> > Thanks @Dandandan @xiedeyantu for the discussion.\r\n> > **Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n> > **Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n> > **GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n> > **Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n> > > > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > > > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> > > \r\n> > > \r\n> > > @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n> \r\n> Sounds good - agreed.\r\n\r\n",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4110284239,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-23T12:33:06Z",
+        "updated_at": "2026-03-23T12:33:06Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Following up with additional real-data benchmark results for <code class=\"notranslate\">MultiDistinctCountRewrite</code> (config-gated by <code class=\"notranslate\">datafusion.optimizer.enable_multi_distinct_count_rewrite</code>, default <code class=\"notranslate\">false</code>).</p>\n<h2 dir=\"auto\">Dataset generation / setup</h2>\n<p dir=\"auto\">I used local TPCH SF1 parquet generated with:</p>\n<div class=\"highlight highlight-source-shell notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"cargo install tpchgen-cli\ntpchgen-cli --scale-factor 1 --format parquet --parquet-compression 'ZSTD(1)' --parts 1 --output-dir benchmarks/data/tpch_sf1\"><pre class=\"notranslate\">cargo install tpchgen-cli\ntpchgen-cli --scale-factor 1 --format parquet --parquet-compression <span class=\"pl-s\"><span class=\"pl-pds\">'</span>ZSTD(1)<span class=\"pl-pds\">'</span></span> --parts 1 --output-dir benchmarks/data/tpch_sf1</pre></div>\n<p dir=\"auto\">Data path used in all queries:<br>\n<code class=\"notranslate\">benchmarks/data/tpch_sf1/lineitem/*.parquet</code></p>\n<p dir=\"auto\">For timing/memory, each run used:</p>\n<div class=\"highlight highlight-source-shell notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"/usr/bin/time -l datafusion-cli -q --format csv -c &quot;SET datafusion.optimizer.enable_multi_distinct_count_rewrite = &lt;true|false&gt;;&quot; -c &quot;&lt;QUERY&gt;&quot;\"><pre class=\"notranslate\">/usr/bin/time -l datafusion-cli -q --format csv -c <span class=\"pl-s\"><span class=\"pl-pds\">\"</span>SET datafusion.optimizer.enable_multi_distinct_count_rewrite = &lt;true|false&gt;;<span class=\"pl-pds\">\"</span></span> -c <span class=\"pl-s\"><span class=\"pl-pds\">\"</span>&lt;QUERY&gt;<span class=\"pl-pds\">\"</span></span></pre></div>\n<p dir=\"auto\">(Reporting wall time + max RSS from <code class=\"notranslate\">time -l</code>.)</p>\n<h2 dir=\"auto\">Queries tested</h2>\n<h3 dir=\"auto\">Scenario 1: 3 distincts (grouped)</h3>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT SUM(d1) AS s1, SUM(d2) AS s2, SUM(d3) AS s3\nFROM (\n  SELECT l_suppkey,\n         COUNT(DISTINCT l_orderkey) AS d1,\n         COUNT(DISTINCT l_partkey) AS d2,\n         COUNT(DISTINCT l_linenumber) AS d3\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\n  GROUP BY l_suppkey\n);\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> <span class=\"pl-c1\">SUM</span>(d1) <span class=\"pl-k\">AS</span> s1, <span class=\"pl-c1\">SUM</span>(d2) <span class=\"pl-k\">AS</span> s2, <span class=\"pl-c1\">SUM</span>(d3) <span class=\"pl-k\">AS</span> s3\n<span class=\"pl-k\">FROM</span> (\n  <span class=\"pl-k\">SELECT</span> l_suppkey,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT l_orderkey) <span class=\"pl-k\">AS</span> d1,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT l_partkey) <span class=\"pl-k\">AS</span> d2,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT l_linenumber) <span class=\"pl-k\">AS</span> d3\n  <span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n  <span class=\"pl-k\">GROUP BY</span> l_suppkey\n);</pre></div>\n<h3 dir=\"auto\">Scenario 2: CAST-based distincts</h3>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT SUM(cx) AS sx, SUM(cy) AS sy\nFROM (\n  SELECT l_suppkey,\n         COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\n         COUNT(DISTINCT CAST(l_discount * 100 AS INT)) AS cy\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\n  GROUP BY l_suppkey\n);\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> <span class=\"pl-c1\">SUM</span>(cx) <span class=\"pl-k\">AS</span> sx, <span class=\"pl-c1\">SUM</span>(cy) <span class=\"pl-k\">AS</span> sy\n<span class=\"pl-k\">FROM</span> (\n  <span class=\"pl-k\">SELECT</span> l_suppkey,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_extendedprice <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cx,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_discount <span class=\"pl-k\">*</span> <span class=\"pl-c1\">100</span> <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cy\n  <span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n  <span class=\"pl-k\">GROUP BY</span> l_suppkey\n);</pre></div>\n<h3 dir=\"auto\">Scenario 3: lower() + string distinct</h3>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT SUM(c1) AS s1, SUM(c2) AS s2\nFROM (\n  SELECT l_returnflag,\n         COUNT(DISTINCT lower(l_shipmode)) AS c1,\n         COUNT(DISTINCT l_shipinstruct) AS c2\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\n  GROUP BY l_returnflag\n);\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> <span class=\"pl-c1\">SUM</span>(c1) <span class=\"pl-k\">AS</span> s1, <span class=\"pl-c1\">SUM</span>(c2) <span class=\"pl-k\">AS</span> s2\n<span class=\"pl-k\">FROM</span> (\n  <span class=\"pl-k\">SELECT</span> l_returnflag,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT <span class=\"pl-c1\">lower</span>(l_shipmode)) <span class=\"pl-k\">AS</span> c1,\n         <span class=\"pl-c1\">COUNT</span>(DISTINCT l_shipinstruct) <span class=\"pl-k\">AS</span> c2\n  <span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n  <span class=\"pl-k\">GROUP BY</span> l_returnflag\n);</pre></div>\n<h2 dir=\"auto\">Results (latency + max RSS)</h2>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Scenario</th>\n<th align=\"right\">Rewrite OFF</th>\n<th align=\"right\">Rewrite ON</th>\n<th>Outcome</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1) three distincts</td>\n<td align=\"right\">0.28s, ~570 MB</td>\n<td align=\"right\">0.12s, ~730 MB</td>\n<td>Faster, higher memory</td>\n</tr>\n<tr>\n<td>2) cast-based distincts</td>\n<td align=\"right\">0.17s, ~349 MB</td>\n<td align=\"right\">0.16s, ~350 MB</td>\n<td>Near tie</td>\n</tr>\n<tr>\n<td>3) lower()+string distinct</td>\n<td align=\"right\">0.04s, ~99 MB</td>\n<td align=\"right\">0.06s, ~94 MB</td>\n<td>Slightly slower, slightly lower memory</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\">All paired runs returned identical query results.</p>\n<h2 dir=\"auto\">Takeaway</h2>\n<p dir=\"auto\">The rewrite can improve latency in some multi-distinct grouped cases, but can also increase peak memory and/or be neutral/slightly slower depending on cardinality and expression shape. Keeping this rule opt-in (default off) remains appropriate while we expand benchmark coverage.</p>\n<blockquote>\n<p dir=\"auto\">Yes, I can see it would improve a lot of queries</p>\n<blockquote>\n<p dir=\"auto\">Thanks <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a> for the discussion.<br>\n<strong>Join cost / default behavior:</strong> Agreed that joining on grouping keys isn’t free. We’ve added <strong><code class=\"notranslate\">datafusion.optimizer.enable_multi_distinct_count_rewrite</code></strong> with default <strong><code class=\"notranslate\">false</code></strong>, so the rewrite is <strong>opt-in</strong> until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.<br>\n<strong>Benchmarks:</strong> We’re aligned that we should measure <strong>latency and memory</strong> vs baseline across scenarios (e.g. multiple <code class=\"notranslate\">COUNT(DISTINCT …)</code> with <code class=\"notranslate\">GROUP BY</code>, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.<br>\n<strong>GroupsAccumulator / execution-layer improvements:</strong> That work is complementary: better distinct accumulators help <strong>how</strong> each aggregate runs; this rule changes <strong>logical plan shape</strong> when several large distincts share one aggregate. Both can coexist on the roadmap.<br>\n<strong>Tests:</strong> We added optimizer + SQL integration coverage (including cases with <code class=\"notranslate\">lower</code>/<code class=\"notranslate\">CAST</code> inside <code class=\"notranslate\">COUNT(DISTINCT …)</code> and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.</p>\n<blockquote>\n<blockquote>\n<p dir=\"auto\">I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.<br>\nI am also wondering if mostly for memory usage a <code class=\"notranslate\">GroupsAccumulator</code> for distinct count / sum might give similar/more improvements.</p>\n</blockquote>\n<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Dandandan/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Dandandan\">@Dandandan</a> Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.</p>\n</blockquote>\n</blockquote>\n<p dir=\"auto\">Sounds good - agreed.</p>\n</blockquote>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4110389221",
+        "body": "Thank you for the detailed test! But I have a few questions.\r\n\r\n1. Why add an extra \r\n\"SUM\" outside?\r\n2. I think it’s better for \r\n\"CAST\" not to involve expression calculations.\r\n3. It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4110389221,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-23T12:51:47Z",
+        "updated_at": "2026-03-23T12:51:47Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Thank you for the detailed test! But I have a few questions.</p>\n<ol dir=\"auto\">\n<li>Why add an extra<br>\n\"SUM\" outside?</li>\n<li>I think it’s better for<br>\n\"CAST\" not to involve expression calculations.</li>\n<li>It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?</li>\n</ol>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4115356321",
+        "body": "Hi! @xiedeyantu, great feedback. Let me explain my thought process for some of the design choices regarding the tests. See inline \r\n\r\n> Thank you for the detailed test! But I have a few questions.\r\n> \r\n> 1. Why add an extra\r\n>    \"SUM\" outside?\r\n\r\nThe outer `SELECT SUM(...) FROM ( ... GROUP BY ... )` is a **harness choice**:\r\n\r\n- The work under measurement is the **inner** grouped aggregate (multiple `COUNT(DISTINCT …)`).\r\n- The outer `SUM` collapses per-group results to **one row**, which avoids dumping thousands of rows when comparing wall time / peak RSS.\r\n- To benchmark **only** the inner shape, run the subquery alone (or use `SELECT COUNT(*) FROM (inner) t` if you want a scalar sink without changing the inner aggregates).\r\n\r\n> 2. I think it’s better for\r\n>    \"CAST\" not to involve expression calculations.\r\n\r\nAgreed for a clean test: both distincts should use `CAST` on a column only. Our Scenario 2 used `CAST(l_extendedprice AS INT)` (column-only) and `CAST(l_discount * 100 AS INT)` (expression inside the cast). We'll switch the second to something like `CAST(l_discount AS INT)` (or another column-only cast) so we're not mixing in arithmetic inside `CAST`, and so it lines up with the rule's conservative “safe” distinct arguments.\r\n\r\n> 3. It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?\r\n\r\nThe `lower()` case used `GROUP BY l_returnflag`, which is only a few groups. For a high-cardinality variant we'll use the same select list but a denser key, e.g. `GROUP BY l_suppkey` (or `l_orderkey`), so the join after the rewrite has many more keys — still with `COUNT(DISTINCT lower(l_shipmode))` and `COUNT(DISTINCT l_shipinstruct)`.\r\n\r\nWe'll follow up with updated query text and numbers when we rerun.\r\n\r\n",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4115356321,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-24T04:42:16Z",
+        "updated_at": "2026-03-24T04:42:16Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Hi! <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a>, great feedback. Let me explain my thought process for some of the design choices regarding the tests. See inline</p>\n<blockquote>\n<p dir=\"auto\">Thank you for the detailed test! But I have a few questions.</p>\n<ol dir=\"auto\">\n<li>Why add an extra<br>\n\"SUM\" outside?</li>\n</ol>\n</blockquote>\n<p dir=\"auto\">The outer <code class=\"notranslate\">SELECT SUM(...) FROM ( ... GROUP BY ... )</code> is a <strong>harness choice</strong>:</p>\n<ul dir=\"auto\">\n<li>The work under measurement is the <strong>inner</strong> grouped aggregate (multiple <code class=\"notranslate\">COUNT(DISTINCT …)</code>).</li>\n<li>The outer <code class=\"notranslate\">SUM</code> collapses per-group results to <strong>one row</strong>, which avoids dumping thousands of rows when comparing wall time / peak RSS.</li>\n<li>To benchmark <strong>only</strong> the inner shape, run the subquery alone (or use <code class=\"notranslate\">SELECT COUNT(*) FROM (inner) t</code> if you want a scalar sink without changing the inner aggregates).</li>\n</ul>\n<blockquote>\n<ol start=\"2\" dir=\"auto\">\n<li>I think it’s better for<br>\n\"CAST\" not to involve expression calculations.</li>\n</ol>\n</blockquote>\n<p dir=\"auto\">Agreed for a clean test: both distincts should use <code class=\"notranslate\">CAST</code> on a column only. Our Scenario 2 used <code class=\"notranslate\">CAST(l_extendedprice AS INT)</code> (column-only) and <code class=\"notranslate\">CAST(l_discount * 100 AS INT)</code> (expression inside the cast). We'll switch the second to something like <code class=\"notranslate\">CAST(l_discount AS INT)</code> (or another column-only cast) so we're not mixing in arithmetic inside <code class=\"notranslate\">CAST</code>, and so it lines up with the rule's conservative “safe” distinct arguments.</p>\n<blockquote>\n<ol start=\"3\" dir=\"auto\">\n<li>It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?</li>\n</ol>\n</blockquote>\n<p dir=\"auto\">The <code class=\"notranslate\">lower()</code> case used <code class=\"notranslate\">GROUP BY l_returnflag</code>, which is only a few groups. For a high-cardinality variant we'll use the same select list but a denser key, e.g. <code class=\"notranslate\">GROUP BY l_suppkey</code> (or <code class=\"notranslate\">l_orderkey</code>), so the join after the rewrite has many more keys — still with <code class=\"notranslate\">COUNT(DISTINCT lower(l_shipmode))</code> and <code class=\"notranslate\">COUNT(DISTINCT l_shipinstruct)</code>.</p>\n<p dir=\"auto\">We'll follow up with updated query text and numbers when we rerun.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4115456381",
+        "body": "Hi @xiedeyantu update on the benchmarking. The new benchmarks use the **grouped aggregate only** (no outer `SUM` or other wrapper) so timings reflect the multi–`COUNT(DISTINCT …)` work directly. Note: Figures below are **warm-cache** repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer `SUM`).\r\n\r\n---\r\n\r\n## Queries tested - original runs\r\n\r\n### Scenario 1: three distincts (grouped)\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT l_orderkey) AS d1,\r\n       COUNT(DISTINCT l_partkey) AS d2,\r\n       COUNT(DISTINCT l_linenumber) AS d3\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n---\r\n\r\n## Rerun: reviewer-aligned changes\r\n\r\n**CAST (Scenario 2):** both distincts use `CAST` on a **column** only (no `*` expression inside `CAST`):\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n       COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n\r\n**High cardinality (Scenario 3):** same aggregates as before, but **`GROUP BY l_suppkey`** instead of `l_returnflag`:\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n       COUNT(DISTINCT l_shipinstruct) AS c2\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n\r\n### Results (mean ± sample stddev, **n=10** per cell)\r\n\r\nMeasured with `/usr/bin/time -l` and `target/release/datafusion-cli` from the repo root. RSS is **maximum resident set size** from `time -l` (MB here are decimal megabytes: bytes / 10⁶). Queries are the **reviewer-aligned grouped aggregates above** (no outer `SUM`).\r\n\r\n**wall (s) mean ± stddev**\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|----------|------------:|-----------:|---------|\r\n| 1) three distincts | 0.2490 ± 0.0099 | 0.1000 ± 0.0000 | Lower mean wall time with ON |\r\n| 2) cast-based (column-only `CAST`) | 0.1350 ± 0.0053 | 0.0700 ± 0.0000 | Lower mean wall time with ON |\r\n| 3) lower()+string (`GROUP BY l_suppkey`) | 3.3920 ± 0.6496 | 0.0800 ± 0.0000 | Much lower mean wall time with ON |\r\n\r\n**max RSS (MB) mean ± stddev**\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|----------|------------:|-----------:|---------|\r\n| 1) three distincts | 590.03 ± 10.12 | 722.62 ± 12.70 | Higher mean peak RSS with ON |\r\n| 2) cast-based (column-only `CAST`) | 331.83 ± 4.56 | 638.49 ± 8.29 | Higher mean peak RSS with ON |\r\n| 3) lower()+string (`GROUP BY l_suppkey`) | 9755.13 ± 114.94 | 277.66 ± 1.71 | Much lower mean peak RSS with ON |\r\n\r\nRow outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from `time` is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4115456381,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-24T05:14:53Z",
+        "updated_at": "2026-03-24T05:17:38Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a> update on the benchmarking. The new benchmarks use the <strong>grouped aggregate only</strong> (no outer <code class=\"notranslate\">SUM</code> or other wrapper) so timings reflect the multi–<code class=\"notranslate\">COUNT(DISTINCT …)</code> work directly. Note: Figures below are <strong>warm-cache</strong> repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer <code class=\"notranslate\">SUM</code>).</p>\n<hr>\n<h2 dir=\"auto\">Queries tested - original runs</h2>\n<h3 dir=\"auto\">Scenario 1: three distincts (grouped)</h3>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT l_orderkey) AS d1,\n       COUNT(DISTINCT l_partkey) AS d2,\n       COUNT(DISTINCT l_linenumber) AS d3\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_orderkey) <span class=\"pl-k\">AS</span> d1,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_partkey) <span class=\"pl-k\">AS</span> d2,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_linenumber) <span class=\"pl-k\">AS</span> d3\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<hr>\n<h2 dir=\"auto\">Rerun: reviewer-aligned changes</h2>\n<p dir=\"auto\"><strong>CAST (Scenario 2):</strong> both distincts use <code class=\"notranslate\">CAST</code> on a <strong>column</strong> only (no <code class=\"notranslate\">*</code> expression inside <code class=\"notranslate\">CAST</code>):</p>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\n       COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_extendedprice <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cx,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_discount <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cy\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<p dir=\"auto\"><strong>High cardinality (Scenario 3):</strong> same aggregates as before, but <strong><code class=\"notranslate\">GROUP BY l_suppkey</code></strong> instead of <code class=\"notranslate\">l_returnflag</code>:</p>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT lower(l_shipmode)) AS c1,\n       COUNT(DISTINCT l_shipinstruct) AS c2\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT <span class=\"pl-c1\">lower</span>(l_shipmode)) <span class=\"pl-k\">AS</span> c1,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_shipinstruct) <span class=\"pl-k\">AS</span> c2\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<h3 dir=\"auto\">Results (mean ± sample stddev, <strong>n=10</strong> per cell)</h3>\n<p dir=\"auto\">Measured with <code class=\"notranslate\">/usr/bin/time -l</code> and <code class=\"notranslate\">target/release/datafusion-cli</code> from the repo root. RSS is <strong>maximum resident set size</strong> from <code class=\"notranslate\">time -l</code> (MB here are decimal megabytes: bytes / 10⁶). Queries are the <strong>reviewer-aligned grouped aggregates above</strong> (no outer <code class=\"notranslate\">SUM</code>).</p>\n<p dir=\"auto\"><strong>wall (s) mean ± stddev</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Scenario</th>\n<th align=\"right\">Rewrite OFF</th>\n<th align=\"right\">Rewrite ON</th>\n<th>Outcome</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1) three distincts</td>\n<td align=\"right\">0.2490 ± 0.0099</td>\n<td align=\"right\">0.1000 ± 0.0000</td>\n<td>Lower mean wall time with ON</td>\n</tr>\n<tr>\n<td>2) cast-based (column-only <code class=\"notranslate\">CAST</code>)</td>\n<td align=\"right\">0.1350 ± 0.0053</td>\n<td align=\"right\">0.0700 ± 0.0000</td>\n<td>Lower mean wall time with ON</td>\n</tr>\n<tr>\n<td>3) lower()+string (<code class=\"notranslate\">GROUP BY l_suppkey</code>)</td>\n<td align=\"right\">3.3920 ± 0.6496</td>\n<td align=\"right\">0.0800 ± 0.0000</td>\n<td>Much lower mean wall time with ON</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\"><strong>max RSS (MB) mean ± stddev</strong></p>\n<markdown-accessiblity-table><table role=\"table\">\n<thead>\n<tr>\n<th>Scenario</th>\n<th align=\"right\">Rewrite OFF</th>\n<th align=\"right\">Rewrite ON</th>\n<th>Outcome</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1) three distincts</td>\n<td align=\"right\">590.03 ± 10.12</td>\n<td align=\"right\">722.62 ± 12.70</td>\n<td>Higher mean peak RSS with ON</td>\n</tr>\n<tr>\n<td>2) cast-based (column-only <code class=\"notranslate\">CAST</code>)</td>\n<td align=\"right\">331.83 ± 4.56</td>\n<td align=\"right\">638.49 ± 8.29</td>\n<td>Higher mean peak RSS with ON</td>\n</tr>\n<tr>\n<td>3) lower()+string (<code class=\"notranslate\">GROUP BY l_suppkey</code>)</td>\n<td align=\"right\">9755.13 ± 114.94</td>\n<td align=\"right\">277.66 ± 1.71</td>\n<td>Much lower mean peak RSS with ON</td>\n</tr>\n</tbody>\n</table></markdown-accessiblity-table>\n<p dir=\"auto\">Row outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from <code class=\"notranslate\">time</code> is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2994064374",
+        "body": "\"This can reduce peak memory\" \nCould this description be further optimized? Aggregation parallelism does not always reduce peak memory usage.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 2994064374,
+        "pull_request_review_id": 4013173247,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T11:09:33Z",
+        "updated_at": "2026-03-26T11:40:01Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": null,
+        "start_line": null,
+        "path": "docs/source/user-guide/configs.md",
+        "body_html": "<p dir=\"auto\">\"This can reduce peak memory\"<br>\nCould this description be further optimized? Aggregation parallelism does not always reduce peak memory usage.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133837810",
+        "body": "> Hi @xiedeyantu update on the benchmarking. The new benchmarks use the **grouped aggregate only** (no outer `SUM` or other wrapper) so timings reflect the multi–`COUNT(DISTINCT …)` work directly. Note: Figures below are **warm-cache** repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer `SUM`).\r\n> \r\n> ## Queries tested - original runs\r\n> ### Scenario 1: three distincts (grouped)\r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT l_orderkey) AS d1,\r\n>        COUNT(DISTINCT l_partkey) AS d2,\r\n>        COUNT(DISTINCT l_linenumber) AS d3\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> ## Rerun: reviewer-aligned changes\r\n> **CAST (Scenario 2):** both distincts use `CAST` on a **column** only (no `*` expression inside `CAST`):\r\n> \r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n>        COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> **High cardinality (Scenario 3):** same aggregates as before, but **`GROUP BY l_suppkey`** instead of `l_returnflag`:\r\n> \r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n>        COUNT(DISTINCT l_shipinstruct) AS c2\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> ### Results (mean ± sample stddev, **n=10** per cell)\r\n> Measured with `/usr/bin/time -l` and `target/release/datafusion-cli` from the repo root. RSS is **maximum resident set size** from `time -l` (MB here are decimal megabytes: bytes / 10⁶). Queries are the **reviewer-aligned grouped aggregates above** (no outer `SUM`).\r\n> \r\n> **wall (s) mean ± stddev**\r\n> \r\n> Scenario\tRewrite OFF\tRewrite ON\tOutcome\r\n> 1) three distincts\t0.2490 ± 0.0099\t0.1000 ± 0.0000\tLower mean wall time with ON\r\n> 2) cast-based (column-only `CAST`)\t0.1350 ± 0.0053\t0.0700 ± 0.0000\tLower mean wall time with ON\r\n> 3) lower()+string (`GROUP BY l_suppkey`)\t3.3920 ± 0.6496\t0.0800 ± 0.0000\tMuch lower mean wall time with ON\r\n> **max RSS (MB) mean ± stddev**\r\n> \r\n> Scenario\tRewrite OFF\tRewrite ON\tOutcome\r\n> 1) three distincts\t590.03 ± 10.12\t722.62 ± 12.70\tHigher mean peak RSS with ON\r\n> 2) cast-based (column-only `CAST`)\t331.83 ± 4.56\t638.49 ± 8.29\tHigher mean peak RSS with ON\r\n> 3) lower()+string (`GROUP BY l_suppkey`)\t9755.13 ± 114.94\t277.66 ± 1.71\tMuch lower mean peak RSS with ON\r\n> Row outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from `time` is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).\r\n\r\nThank you for the detailed testing! The test results look excellent to me. I have no further suggestions at this time.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4133837810,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T11:29:15Z",
+        "updated_at": "2026-03-26T11:29:15Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<blockquote>\n<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/xiedeyantu/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/xiedeyantu\">@xiedeyantu</a> update on the benchmarking. The new benchmarks use the <strong>grouped aggregate only</strong> (no outer <code class=\"notranslate\">SUM</code> or other wrapper) so timings reflect the multi–<code class=\"notranslate\">COUNT(DISTINCT …)</code> work directly. Note: Figures below are <strong>warm-cache</strong> repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer <code class=\"notranslate\">SUM</code>).</p>\n<h2 dir=\"auto\">Queries tested - original runs</h2>\n<h3 dir=\"auto\">Scenario 1: three distincts (grouped)</h3>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT l_orderkey) AS d1,\n       COUNT(DISTINCT l_partkey) AS d2,\n       COUNT(DISTINCT l_linenumber) AS d3\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_orderkey) <span class=\"pl-k\">AS</span> d1,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_partkey) <span class=\"pl-k\">AS</span> d2,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_linenumber) <span class=\"pl-k\">AS</span> d3\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<h2 dir=\"auto\">Rerun: reviewer-aligned changes</h2>\n<p dir=\"auto\"><strong>CAST (Scenario 2):</strong> both distincts use <code class=\"notranslate\">CAST</code> on a <strong>column</strong> only (no <code class=\"notranslate\">*</code> expression inside <code class=\"notranslate\">CAST</code>):</p>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\n       COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_extendedprice <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cx,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT CAST(l_discount <span class=\"pl-k\">AS</span> <span class=\"pl-k\">INT</span>)) <span class=\"pl-k\">AS</span> cy\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<p dir=\"auto\"><strong>High cardinality (Scenario 3):</strong> same aggregates as before, but <strong><code class=\"notranslate\">GROUP BY l_suppkey</code></strong> instead of <code class=\"notranslate\">l_returnflag</code>:</p>\n<div class=\"highlight highlight-source-sql notranslate position-relative overflow-auto\" dir=\"auto\" data-snippet-clipboard-copy-content=\"SELECT l_suppkey,\n       COUNT(DISTINCT lower(l_shipmode)) AS c1,\n       COUNT(DISTINCT l_shipinstruct) AS c2\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\nGROUP BY l_suppkey;\"><pre class=\"notranslate\"><span class=\"pl-k\">SELECT</span> l_suppkey,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT <span class=\"pl-c1\">lower</span>(l_shipmode)) <span class=\"pl-k\">AS</span> c1,\n       <span class=\"pl-c1\">COUNT</span>(DISTINCT l_shipinstruct) <span class=\"pl-k\">AS</span> c2\n<span class=\"pl-k\">FROM</span> <span class=\"pl-s\"><span class=\"pl-pds\">'</span>benchmarks/data/tpch_sf1/lineitem/*.parquet<span class=\"pl-pds\">'</span></span>\n<span class=\"pl-k\">GROUP BY</span> l_suppkey;</pre></div>\n<h3 dir=\"auto\">Results (mean ± sample stddev, <strong>n=10</strong> per cell)</h3>\n<p dir=\"auto\">Measured with <code class=\"notranslate\">/usr/bin/time -l</code> and <code class=\"notranslate\">target/release/datafusion-cli</code> from the repo root. RSS is <strong>maximum resident set size</strong> from <code class=\"notranslate\">time -l</code> (MB here are decimal megabytes: bytes / 10⁶). Queries are the <strong>reviewer-aligned grouped aggregates above</strong> (no outer <code class=\"notranslate\">SUM</code>).</p>\n<p dir=\"auto\"><strong>wall (s) mean ± stddev</strong></p>\n<p dir=\"auto\">Scenario\tRewrite OFF\tRewrite ON\tOutcome</p>\n<ol dir=\"auto\">\n<li>three distincts\t0.2490 ± 0.0099\t0.1000 ± 0.0000\tLower mean wall time with ON</li>\n<li>cast-based (column-only <code class=\"notranslate\">CAST</code>)\t0.1350 ± 0.0053\t0.0700 ± 0.0000\tLower mean wall time with ON</li>\n<li>lower()+string (<code class=\"notranslate\">GROUP BY l_suppkey</code>)\t3.3920 ± 0.6496\t0.0800 ± 0.0000\tMuch lower mean wall time with ON<br>\n<strong>max RSS (MB) mean ± stddev</strong></li>\n</ol>\n<p dir=\"auto\">Scenario\tRewrite OFF\tRewrite ON\tOutcome</p>\n<ol dir=\"auto\">\n<li>three distincts\t590.03 ± 10.12\t722.62 ± 12.70\tHigher mean peak RSS with ON</li>\n<li>cast-based (column-only <code class=\"notranslate\">CAST</code>)\t331.83 ± 4.56\t638.49 ± 8.29\tHigher mean peak RSS with ON</li>\n<li>lower()+string (<code class=\"notranslate\">GROUP BY l_suppkey</code>)\t9755.13 ± 114.94\t277.66 ± 1.71\tMuch lower mean peak RSS with ON<br>\nRow outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from <code class=\"notranslate\">time</code> is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).</li>\n</ol>\n</blockquote>\n<p dir=\"auto\">Thank you for the detailed testing! The test results look excellent to me. I have no further suggestions at this time.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133910311",
+        "body": "I have one minor question. In the scenario of rewriting \r\n\"g, count(distinct lower(a))\" to \r\n\"group by g, lower(a)\", why restrict it to only \r\n\"lower\", \r\n\"upper\", and \r\n\"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then \r\n\"lower\" is not one. If it is an injective function, the rewrite could simply be \r\n\"group by g, a\". Could you please clarify the design rationale behind this?",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4133910311,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T11:39:27Z",
+        "updated_at": "2026-03-26T11:39:27Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">I have one minor question. In the scenario of rewriting<br>\n\"g, count(distinct lower(a))\" to<br>\n\"group by g, lower(a)\", why restrict it to only<br>\n\"lower\",<br>\n\"upper\", and<br>\n\"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then<br>\n\"lower\" is not one. If it is an injective function, the rewrite could simply be<br>\n\"group by g, a\". Could you please clarify the design rationale behind this?</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4013173247",
+        "body": "",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+          "id": 49781471
+        },
+        "id": 4013173247,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T11:40:00Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133967253",
+        "body": "You’re right that injectivity isn’t the right lens here. COUNT(DISTINCT f(a)) is defined over the values of f(a), so the semantics-preserving rewrite is to compute distinctness on the same expression, i.e. GROUP BY g, f(a) (not GROUP BY g, a). For example, lower('Abc') and lower('aBC') must collapse to the same distinct bucket, and CAST(1.2 AS INT) / CAST(1.3 AS INT) can intentionally collide as well.\r\n\r\nThe current lower/upper/cast allowlist is a conservative scope guard, not a correctness requirement: it keeps the initial (default-off) rule limited to a small set of deterministic, well-covered expression shapes while we broaden test/benchmark coverage and validate edge cases across types / functions.\r\n\r\n> I have one minor question. In the scenario of rewriting \"g, count(distinct lower(a))\" to \"group by g, lower(a)\", why restrict it to only \"lower\", \"upper\", and \"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then \"lower\" is not one. If it is an injective function, the rewrite could simply be \"group by g, a\". Could you please clarify the design rationale behind this?\r\n\r\n",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 4133967253,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T11:47:25Z",
+        "updated_at": "2026-03-26T12:11:21Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">You’re right that injectivity isn’t the right lens here. COUNT(DISTINCT f(a)) is defined over the values of f(a), so the semantics-preserving rewrite is to compute distinctness on the same expression, i.e. GROUP BY g, f(a) (not GROUP BY g, a). For example, lower('Abc') and lower('aBC') must collapse to the same distinct bucket, and CAST(1.2 AS INT) / CAST(1.3 AS INT) can intentionally collide as well.</p>\n<p dir=\"auto\">The current lower/upper/cast allowlist is a conservative scope guard, not a correctness requirement: it keeps the initial (default-off) rule limited to a small set of deterministic, well-covered expression shapes while we broaden test/benchmark coverage and validate edge cases across types / functions.</p>\n<blockquote>\n<p dir=\"auto\">I have one minor question. In the scenario of rewriting \"g, count(distinct lower(a))\" to \"group by g, lower(a)\", why restrict it to only \"lower\", \"upper\", and \"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then \"lower\" is not one. If it is an injective function, the rewrite could simply be \"group by g, a\". Could you please clarify the design rationale behind this?</p>\n</blockquote>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2994387765",
+        "body": "I have made small changes to this in my latest commit, Hope this helps.",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+          "id": 19206585
+        },
+        "id": 2994387765,
+        "pull_request_review_id": 4013535263,
+        "in_reply_to_id": 2994064374,
+        "created_at": "2026-03-26T12:00:12Z",
+        "updated_at": "2026-03-26T12:00:13Z",
+        "review": null,
+        "side": "RIGHT",
+        "line": null,
+        "start_line": null,
+        "path": "docs/source/user-guide/configs.md",
+        "body_html": "<p dir=\"auto\">I have made small changes to this in my latest commit, Hope this helps.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4013535263",
+        "body": "",
+        "user": {
+          "login": "ydgandhi",
+          "name": "ydgandhi",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/19206585?u=017fe8692c536a94501577139f23896f142771c7&v=4",
+          "id": 19206585
+        },
+        "id": 4013535263,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T12:00:13Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": ""
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4134601985",
+        "body": "Perhaps the next PR could consider a simplification approach for injective functions, which might yield better performance gains. If we keep the original design, I personally don’t see the need to impose restrictions. We cannot guarantee that a rule is beneficial in all cases—cost-based selection should be integrated. Of course, this is just my personal suggestion.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+          "id": 49781471
+        },
+        "id": 4134601985,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T13:06:07Z",
+        "updated_at": "2026-03-26T13:06:07Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Perhaps the next PR could consider a simplification approach for injective functions, which might yield better performance gains. If we keep the original design, I personally don’t see the need to impose restrictions. We cannot guarantee that a rule is beneficial in all cases—cost-based selection should be integrated. Of course, this is just my personal suggestion.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4014043275",
+        "body": "I've only left a few suggestions for your reference. Otherwise, I have no further input.",
+        "user": {
+          "login": "xiedeyantu",
+          "name": "xiedeyantu",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+          "id": 49781471
+        },
+        "id": 4014043275,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-03-26T13:13:32Z",
+        "updated_at": null,
+        "review": "APPROVED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">I've only left a few suggestions for your reference. Otherwise, I have no further input.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4539163793",
+        "body": "Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.",
+        "user": {
+          "login": "github-actions[bot]",
+          "name": "github-actions[bot]",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+          "id": 41898282
+        },
+        "id": 4539163793,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-05-26T02:17:31Z",
+        "updated_at": "2026-05-26T02:17:31Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.</p>"
+      }
+    ],
+    "created_at": "2026-03-21T07:29:25Z",
+    "updated_at": "2026-06-02T02:18:16Z",
+    "closed_at": "2026-06-02T02:18:16Z",
+    "merged_at": null,
+    "commits": 12,
+    "changed_files": 7,
+    "additions": 875,
+    "deletions": 0,
+    "display_url": "https://github.com/apache/datafusion/pull/21088",
+    "display_title": "perf: default multi COUNT(DISTINCT) logical optimizer rewrite"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4102785883",
+      "body": "Hi @ydgandhi !\r\n\r\nThis does seem the same to me as https://github.com/apache/datafusion/pull/20940 ?\r\n\r\nCan you maybe help review that one?",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "created_at": "2026-03-21T07:47:19Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103001083",
+      "body": "Hi @Dandandan - thanks for this work; the cross-join split for **multiple distinct aggregates with no `GROUP BY`** is a strong fit for workloads like ClickBench extended.\r\n\r\nI’ve been working on a related but **different** pattern: **`GROUP BY` + several `COUNT(DISTINCT …)`** in the same aggregate (typical BI). In that situation, your rule is not quite applicable, because `MultiDistinctToCrossJoin` needs an **empty** `GROUP BY` and **all** aggregates to be distinct on different columns.\r\n\r\nHere is a concrete example from our internal benchmark suite on an `ecommerce_orders` table:\r\n\r\n```sql\r\nSELECT\r\n    seller_name,\r\n    COUNT(*) as total_orders,\r\n    COUNT(DISTINCT delivery_city) as cities_served,\r\n    COUNT(DISTINCT state) as states_served,\r\n    SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) as completed_orders,\r\n    SUM(CASE WHEN order_status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled_orders,\r\n    ROUND(100.0 * SUM(CASE WHEN order_status = 'Completed' THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate\r\nFROM ecommerce_orders\r\nGROUP BY seller_name\r\nHAVING COUNT(*) > 100\r\nORDER BY total_orders DESC\r\nLIMIT 100;\r\n```\r\n\r\nThis is **not** “global” multi-distinct: it’s **per `seller_name`**, with **multiple `COUNT(DISTINCT …)`** plus other aggregates. That’s the class my optimizer rule (`MultiDistinctCountRewrite`) targets — rewriting the **`COUNT(DISTINCT …)`** pieces into **joinable sub-aggregates aligned on the same `GROUP BY` keys**, with correct `NULL` handling where needed. For this table with 20m rows, on my M4 machine the times are 0.42s vs ~17s for the implementation in #20940\r\n\r\nIn my opinion, they’re **complementary**: different predicates, different plans, and they can **coexist** in the optimizer pipeline (we’d want to sanity-check rule order so we don’t double-rewrite the same node).\r\n\r\nHappy to align naming, tests, and placement with you and the maintainers.",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-21T10:13:37Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2969599296",
+      "body": "Could you simulate a query like  \n\nSELECT g, COUNT(DISTINCT lower(b)), ... GROUP BY g\n\nwhere the values of  b  are 'Abc' and 'aBC'?\n\nI understand that  cast  presents a similar issue. For instance, when casting a double to an int, the original double values might be 1.2 and 1.3.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T13:39:00Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-3986050001",
+      "body": "",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T13:39:13Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103382064",
+      "body": "I personally think this PR is a more generalized rewrite approach. #20940 might cover a limited range of scenarios, but it is more rigorous. Could the current PR add some test cases?",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-21T13:51:35Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4103479506",
+      "body": "Thanks for the review. I asked cursor to add a few tests\r\n\r\n---\r\n\r\n## Tests for `MultiDistinctCountRewrite` (what they cover)\r\n\r\nOptimizer unit tests — `datafusion/optimizer/src/multi_distinct_count_rewrite.rs`\r\n\r\n| Test | What it asserts |\r\n|------|-----------------|\r\n| `rewrites_two_count_distinct` | `GROUP BY a` + `COUNT(DISTINCT b)`, `COUNT(DISTINCT c)` → inner joins, per-branch null filters on `b`/`c`, `mdc_base` + two `mdc_d` aliases. |\r\n| `rewrites_global_three_count_distinct` | No `GROUP BY`, three `COUNT(DISTINCT …)` → cross/inner join rewrite; **no** `mdc_base` (global-only path). |\r\n| `rewrites_two_count_distinct_with_non_distinct_count` | Grouped BI-style: two distincts + `COUNT(a)` → join rewrite with **`mdc_base`** holding the non-distinct agg. |\r\n| `does_not_rewrite_two_count_distinct_same_column` | Two `COUNT(DISTINCT b)` with different aliases → **no** rewrite (duplicate distinct key). |\r\n| `does_not_rewrite_single_count_distinct` | Only one `COUNT(DISTINCT …)` → **no** rewrite (rule needs ≥2 distincts). |\r\n| `rewrites_three_count_distinct_grouped` | Three grouped `COUNT(DISTINCT …)` on `b`, `c`, `a` → **two** inner joins + `mdc_base`. |\r\n| `rewrites_interleaved_non_distinct_between_distincts` | Order `COUNT(DISTINCT b)`, `COUNT(a)`, `COUNT(DISTINCT c)` → rewrite + `mdc_base` for the middle non-distinct agg (projection order / interleaving). |\r\n| `rewrites_count_distinct_on_cast_exprs` | `COUNT(DISTINCT CAST(b AS Int64))`, same for `c` → rewrite + null filters on the **cast** expressions. |\r\n| `does_not_rewrite_grouping_sets_multi_distinct` | `GROUPING SETS` aggregate with two `COUNT(DISTINCT …)` → **no** rewrite (rule bails on grouping sets). |\r\n| `does_not_rewrite_mixed_agg` | `COUNT(DISTINCT b)` + `COUNT(c)` → **no** rewrite (only **one** `COUNT(DISTINCT …)`; rule requires at least two). |\r\n\r\nSQL integration — `datafusion/core/tests/sql/aggregates/multi_distinct_count_rewrite.rs`\r\n\r\n| Test | What it asserts |\r\n|------|-----------------|\r\n| `multi_count_distinct_matches_expected_with_nulls` | End-to-end grouped two `COUNT(DISTINCT …)` with **NULLs** in distinct columns; exact sorted batch string vs expected counts. |\r\n| `multi_count_distinct_with_count_star_matches_expected` | `COUNT(*)` plus two `COUNT(DISTINCT …)` per group (BI-style); exact result table. |\r\n| `multi_count_distinct_two_group_keys_matches_expected` | **`GROUP BY g1, g2`** + two distincts; verifies joins line up on **all** group keys and numerics match. |\r\n\r\n---",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-21T14:46:21Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2969672012",
+      "body": "Semantics are unchanged, distinct is on the inner expression; we added SQL tests for lower case-folding and CAST collision with two COUNT(DISTINCT …) so the rewrite matches vanilla aggregation.",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-21T14:52:12Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-3986113002",
+      "body": "",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?u=017fe8692c536a94501577139f23896f142771c7&v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-21T14:52:12Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4105715551",
+      "body": "I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys.\r\nSo I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n\r\nI am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "created_at": "2026-03-22T07:19:28Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4106184220",
+      "body": "> I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> \r\n> I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n\r\n@Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-22T12:32:47Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4108104692",
+      "body": "Thanks @Dandandan @xiedeyantu for the discussion.\r\n\r\n**Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n\r\n**Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n\r\n**GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n\r\n**Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n\r\n> > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> \r\n> @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-23T05:28:02Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4109532126",
+      "body": "\r\nYes, I can see it would improve a lot of queries \r\n\r\n> Thanks @Dandandan @xiedeyantu for the discussion.\r\n> \r\n> **Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n> \r\n> **Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n> \r\n> **GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n> \r\n> **Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n> \r\n> > > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> > \r\n> > \r\n> > @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n\r\nSounds good - agreed.",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "created_at": "2026-03-23T10:23:35Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4110284239",
+      "body": "Following up with additional real-data benchmark results for `MultiDistinctCountRewrite` (config-gated by `datafusion.optimizer.enable_multi_distinct_count_rewrite`, default `false`).\r\n\r\n## Dataset generation / setup\r\n\r\nI used local TPCH SF1 parquet generated with:\r\n\r\n```bash\r\ncargo install tpchgen-cli\r\ntpchgen-cli --scale-factor 1 --format parquet --parquet-compression 'ZSTD(1)' --parts 1 --output-dir benchmarks/data/tpch_sf1\r\n```\r\n\r\nData path used in all queries:\r\n`benchmarks/data/tpch_sf1/lineitem/*.parquet`\r\n\r\nFor timing/memory, each run used:\r\n\r\n```bash\r\n/usr/bin/time -l datafusion-cli -q --format csv -c \"SET datafusion.optimizer.enable_multi_distinct_count_rewrite = <true|false>;\" -c \"<QUERY>\"\r\n```\r\n\r\n(Reporting wall time + max RSS from `time -l`.)\r\n\r\n## Queries tested\r\n\r\n### Scenario 1: 3 distincts (grouped)\r\n\r\n```sql\r\nSELECT SUM(d1) AS s1, SUM(d2) AS s2, SUM(d3) AS s3\r\nFROM (\r\n  SELECT l_suppkey,\r\n         COUNT(DISTINCT l_orderkey) AS d1,\r\n         COUNT(DISTINCT l_partkey) AS d2,\r\n         COUNT(DISTINCT l_linenumber) AS d3\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_suppkey\r\n);\r\n```\r\n\r\n### Scenario 2: CAST-based distincts\r\n\r\n```sql\r\nSELECT SUM(cx) AS sx, SUM(cy) AS sy\r\nFROM (\r\n  SELECT l_suppkey,\r\n         COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n         COUNT(DISTINCT CAST(l_discount * 100 AS INT)) AS cy\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_suppkey\r\n);\r\n```\r\n\r\n### Scenario 3: lower() + string distinct\r\n\r\n```sql\r\nSELECT SUM(c1) AS s1, SUM(c2) AS s2\r\nFROM (\r\n  SELECT l_returnflag,\r\n         COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n         COUNT(DISTINCT l_shipinstruct) AS c2\r\n  FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n  GROUP BY l_returnflag\r\n);\r\n```\r\n\r\n## Results (latency + max RSS)\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|---|---:|---:|---|\r\n| 1) three distincts | 0.28s, ~570 MB | 0.12s, ~730 MB | Faster, higher memory |\r\n| 2) cast-based distincts | 0.17s, ~349 MB | 0.16s, ~350 MB | Near tie |\r\n| 3) lower()+string distinct | 0.04s, ~99 MB | 0.06s, ~94 MB | Slightly slower, slightly lower memory |\r\n\r\nAll paired runs returned identical query results.\r\n\r\n## Takeaway\r\n\r\nThe rewrite can improve latency in some multi-distinct grouped cases, but can also increase peak memory and/or be neutral/slightly slower depending on cardinality and expression shape. Keeping this rule opt-in (default off) remains appropriate while we expand benchmark coverage.\r\n\r\n\r\n\r\n> Yes, I can see it would improve a lot of queries\r\n> \r\n> > Thanks @Dandandan @xiedeyantu for the discussion.\r\n> > **Join cost / default behavior:** Agreed that joining on grouping keys isn’t free. We’ve added **`datafusion.optimizer.enable_multi_distinct_count_rewrite`** with default **`false`**, so the rewrite is **opt-in** until we have benchmarks that justify turning it on by default. Sessions can enable it explicitly when they want to try the plan shape.\r\n> > **Benchmarks:** We’re aligned that we should measure **latency and memory** vs baseline across scenarios (e.g. multiple `COUNT(DISTINCT …)` with `GROUP BY`, varying group-key cardinality vs distinct cardinality). We’ll follow up with numbers on the PR.\r\n> > **GroupsAccumulator / execution-layer improvements:** That work is complementary: better distinct accumulators help **how** each aggregate runs; this rule changes **logical plan shape** when several large distincts share one aggregate. Both can coexist on the roadmap.\r\n> > **Tests:** We added optimizer + SQL integration coverage (including cases with `lower`/`CAST` inside `COUNT(DISTINCT …)` and a test that the rule is a no-op when the config is off). Happy to iterate on naming and placement with maintainers.\r\n> > > > I think a rewrite like this might be useful, but I think it can also hurt performance because of the join on grouping keys. So I think it needs to have a config value (off by default) or when enabled some benchmarks showing that it is better in large majority of the cases.\r\n> > > > I am also wondering if mostly for memory usage a `GroupsAccumulator` for distinct count / sum might give similar/more improvements.\r\n> > > \r\n> > > \r\n> > > @Dandandan Thank you for the explanation. It’s true that this would add a hash join, but if aggregation can be performed in parallel, there might be advantages in scenarios with two or more COUNT(DISTINCT) operations. I agree to run performance tests across multiple scenarios to evaluate the actual results.\r\n> \r\n> Sounds good - agreed.\r\n\r\n",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-23T12:33:06Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4110389221",
+      "body": "Thank you for the detailed test! But I have a few questions.\r\n\r\n1. Why add an extra \r\n\"SUM\" outside?\r\n2. I think it’s better for \r\n\"CAST\" not to involve expression calculations.\r\n3. It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-23T12:51:47Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4115356321",
+      "body": "Hi! @xiedeyantu, great feedback. Let me explain my thought process for some of the design choices regarding the tests. See inline \r\n\r\n> Thank you for the detailed test! But I have a few questions.\r\n> \r\n> 1. Why add an extra\r\n>    \"SUM\" outside?\r\n\r\nThe outer `SELECT SUM(...) FROM ( ... GROUP BY ... )` is a **harness choice**:\r\n\r\n- The work under measurement is the **inner** grouped aggregate (multiple `COUNT(DISTINCT …)`).\r\n- The outer `SUM` collapses per-group results to **one row**, which avoids dumping thousands of rows when comparing wall time / peak RSS.\r\n- To benchmark **only** the inner shape, run the subquery alone (or use `SELECT COUNT(*) FROM (inner) t` if you want a scalar sink without changing the inner aggregates).\r\n\r\n> 2. I think it’s better for\r\n>    \"CAST\" not to involve expression calculations.\r\n\r\nAgreed for a clean test: both distincts should use `CAST` on a column only. Our Scenario 2 used `CAST(l_extendedprice AS INT)` (column-only) and `CAST(l_discount * 100 AS INT)` (expression inside the cast). We'll switch the second to something like `CAST(l_discount AS INT)` (or another column-only cast) so we're not mixing in arithmetic inside `CAST`, and so it lines up with the rule's conservative “safe” distinct arguments.\r\n\r\n> 3. It seems the third case is a low-cardinality test — could you show a high-cardinality scenario?\r\n\r\nThe `lower()` case used `GROUP BY l_returnflag`, which is only a few groups. For a high-cardinality variant we'll use the same select list but a denser key, e.g. `GROUP BY l_suppkey` (or `l_orderkey`), so the join after the rewrite has many more keys — still with `COUNT(DISTINCT lower(l_shipmode))` and `COUNT(DISTINCT l_shipinstruct)`.\r\n\r\nWe'll follow up with updated query text and numbers when we rerun.\r\n\r\n",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-24T04:42:16Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4115456381",
+      "body": "Hi @xiedeyantu update on the benchmarking. The new benchmarks use the **grouped aggregate only** (no outer `SUM` or other wrapper) so timings reflect the multi–`COUNT(DISTINCT …)` work directly. Note: Figures below are **warm-cache** repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer `SUM`).\r\n\r\n---\r\n\r\n## Queries tested - original runs\r\n\r\n### Scenario 1: three distincts (grouped)\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT l_orderkey) AS d1,\r\n       COUNT(DISTINCT l_partkey) AS d2,\r\n       COUNT(DISTINCT l_linenumber) AS d3\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n---\r\n\r\n## Rerun: reviewer-aligned changes\r\n\r\n**CAST (Scenario 2):** both distincts use `CAST` on a **column** only (no `*` expression inside `CAST`):\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n       COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n\r\n**High cardinality (Scenario 3):** same aggregates as before, but **`GROUP BY l_suppkey`** instead of `l_returnflag`:\r\n\r\n```sql\r\nSELECT l_suppkey,\r\n       COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n       COUNT(DISTINCT l_shipinstruct) AS c2\r\nFROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\nGROUP BY l_suppkey;\r\n```\r\n\r\n### Results (mean ± sample stddev, **n=10** per cell)\r\n\r\nMeasured with `/usr/bin/time -l` and `target/release/datafusion-cli` from the repo root. RSS is **maximum resident set size** from `time -l` (MB here are decimal megabytes: bytes / 10⁶). Queries are the **reviewer-aligned grouped aggregates above** (no outer `SUM`).\r\n\r\n**wall (s) mean ± stddev**\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|----------|------------:|-----------:|---------|\r\n| 1) three distincts | 0.2490 ± 0.0099 | 0.1000 ± 0.0000 | Lower mean wall time with ON |\r\n| 2) cast-based (column-only `CAST`) | 0.1350 ± 0.0053 | 0.0700 ± 0.0000 | Lower mean wall time with ON |\r\n| 3) lower()+string (`GROUP BY l_suppkey`) | 3.3920 ± 0.6496 | 0.0800 ± 0.0000 | Much lower mean wall time with ON |\r\n\r\n**max RSS (MB) mean ± stddev**\r\n\r\n| Scenario | Rewrite OFF | Rewrite ON | Outcome |\r\n|----------|------------:|-----------:|---------|\r\n| 1) three distincts | 590.03 ± 10.12 | 722.62 ± 12.70 | Higher mean peak RSS with ON |\r\n| 2) cast-based (column-only `CAST`) | 331.83 ± 4.56 | 638.49 ± 8.29 | Higher mean peak RSS with ON |\r\n| 3) lower()+string (`GROUP BY l_suppkey`) | 9755.13 ± 114.94 | 277.66 ± 1.71 | Much lower mean peak RSS with ON |\r\n\r\nRow outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from `time` is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-24T05:14:53Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2994064374",
+      "body": "\"This can reduce peak memory\" \nCould this description be further optimized? Aggregation parallelism does not always reduce peak memory usage.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T11:09:33Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133837810",
+      "body": "> Hi @xiedeyantu update on the benchmarking. The new benchmarks use the **grouped aggregate only** (no outer `SUM` or other wrapper) so timings reflect the multi–`COUNT(DISTINCT …)` work directly. Note: Figures below are **warm-cache** repeats on one machine (relative A/B, not a CI guarantee). Also, these figures are from running each of the query 10 times and flipping the rewrite setting on and off using the grouped queries above (no outer `SUM`).\r\n> \r\n> ## Queries tested - original runs\r\n> ### Scenario 1: three distincts (grouped)\r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT l_orderkey) AS d1,\r\n>        COUNT(DISTINCT l_partkey) AS d2,\r\n>        COUNT(DISTINCT l_linenumber) AS d3\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> ## Rerun: reviewer-aligned changes\r\n> **CAST (Scenario 2):** both distincts use `CAST` on a **column** only (no `*` expression inside `CAST`):\r\n> \r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT CAST(l_extendedprice AS INT)) AS cx,\r\n>        COUNT(DISTINCT CAST(l_discount AS INT)) AS cy\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> **High cardinality (Scenario 3):** same aggregates as before, but **`GROUP BY l_suppkey`** instead of `l_returnflag`:\r\n> \r\n> ```sql\r\n> SELECT l_suppkey,\r\n>        COUNT(DISTINCT lower(l_shipmode)) AS c1,\r\n>        COUNT(DISTINCT l_shipinstruct) AS c2\r\n> FROM 'benchmarks/data/tpch_sf1/lineitem/*.parquet'\r\n> GROUP BY l_suppkey;\r\n> ```\r\n> \r\n> ### Results (mean ± sample stddev, **n=10** per cell)\r\n> Measured with `/usr/bin/time -l` and `target/release/datafusion-cli` from the repo root. RSS is **maximum resident set size** from `time -l` (MB here are decimal megabytes: bytes / 10⁶). Queries are the **reviewer-aligned grouped aggregates above** (no outer `SUM`).\r\n> \r\n> **wall (s) mean ± stddev**\r\n> \r\n> Scenario\tRewrite OFF\tRewrite ON\tOutcome\r\n> 1) three distincts\t0.2490 ± 0.0099\t0.1000 ± 0.0000\tLower mean wall time with ON\r\n> 2) cast-based (column-only `CAST`)\t0.1350 ± 0.0053\t0.0700 ± 0.0000\tLower mean wall time with ON\r\n> 3) lower()+string (`GROUP BY l_suppkey`)\t3.3920 ± 0.6496\t0.0800 ± 0.0000\tMuch lower mean wall time with ON\r\n> **max RSS (MB) mean ± stddev**\r\n> \r\n> Scenario\tRewrite OFF\tRewrite ON\tOutcome\r\n> 1) three distincts\t590.03 ± 10.12\t722.62 ± 12.70\tHigher mean peak RSS with ON\r\n> 2) cast-based (column-only `CAST`)\t331.83 ± 4.56\t638.49 ± 8.29\tHigher mean peak RSS with ON\r\n> 3) lower()+string (`GROUP BY l_suppkey`)\t9755.13 ± 114.94\t277.66 ± 1.71\tMuch lower mean peak RSS with ON\r\n> Row outputs matched OFF vs ON for every scenario (same grouped aggregate result). Wall time from `time` is low-precision on macOS (e.g. all runs may round to the same hundredth of a second, so stddev can be 0).\r\n\r\nThank you for the detailed testing! The test results look excellent to me. I have no further suggestions at this time.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T11:29:15Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133910311",
+      "body": "I have one minor question. In the scenario of rewriting \r\n\"g, count(distinct lower(a))\" to \r\n\"group by g, lower(a)\", why restrict it to only \r\n\"lower\", \r\n\"upper\", and \r\n\"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then \r\n\"lower\" is not one. If it is an injective function, the rewrite could simply be \r\n\"group by g, a\". Could you please clarify the design rationale behind this?",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T11:39:27Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4013173247",
+      "body": "",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T11:40:00Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4133967253",
+      "body": "You’re right that injectivity isn’t the right lens here. COUNT(DISTINCT f(a)) is defined over the values of f(a), so the semantics-preserving rewrite is to compute distinctness on the same expression, i.e. GROUP BY g, f(a) (not GROUP BY g, a). For example, lower('Abc') and lower('aBC') must collapse to the same distinct bucket, and CAST(1.2 AS INT) / CAST(1.3 AS INT) can intentionally collide as well.\r\n\r\nThe current lower/upper/cast allowlist is a conservative scope guard, not a correctness requirement: it keeps the initial (default-off) rule limited to a small set of deterministic, well-covered expression shapes while we broaden test/benchmark coverage and validate edge cases across types / functions.\r\n\r\n> I have one minor question. In the scenario of rewriting \"g, count(distinct lower(a))\" to \"group by g, lower(a)\", why restrict it to only \"lower\", \"upper\", and \"cast\"? I don’t think any restriction is needed here. If the intention is to express an injective function, then \"lower\" is not one. If it is an injective function, the rewrite could simply be \"group by g, a\". Could you please clarify the design rationale behind this?\r\n\r\n",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-26T11:47:25Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#discussion_r2994387765",
+      "body": "I have made small changes to this in my latest commit, Hope this helps.",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-26T12:00:12Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4013535263",
+      "body": "",
+      "user": {
+        "login": "ydgandhi",
+        "name": "ydgandhi",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/19206585?u=017fe8692c536a94501577139f23896f142771c7&v=4",
+        "id": 19206585
+      },
+      "created_at": "2026-03-26T12:00:13Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4134601985",
+      "body": "Perhaps the next PR could consider a simplification approach for injective functions, which might yield better performance gains. If we keep the original design, I personally don’t see the need to impose restrictions. We cannot guarantee that a rule is beneficial in all cases—cost-based selection should be integrated. Of course, this is just my personal suggestion.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T13:06:07Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#pullrequestreview-4014043275",
+      "body": "I've only left a few suggestions for your reference. Otherwise, I have no further input.",
+      "user": {
+        "login": "xiedeyantu",
+        "name": "xiedeyantu",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/49781471?u=5dd76195bf692a7969809201cef9dbd0d692d479&v=4",
+        "id": 49781471
+      },
+      "created_at": "2026-03-26T13:13:32Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/21088#issuecomment-4539163793",
+      "body": "Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days.",
+      "user": {
+        "login": "github-actions[bot]",
+        "name": "github-actions[bot]",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+        "id": 41898282
+      },
+      "created_at": "2026-05-26T02:17:31Z"
+    }
+  ]
+}

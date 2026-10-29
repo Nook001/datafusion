@@ -1,0 +1,317 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 32989756742
+#
+# Overhead  Shared Object            Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              IPC   [IPC Coverage]
+# ........  .......................  ..................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................  ....................
+#
+    57.33%  infralab-distinct-probe  [.] _RNvXs_NtNtNtNtCs9tN8ZXsz6qy_24datafusion_physical_plan10aggregates12group_values15single_group_by9primitiveINtB4_20GroupValuesPrimitiveNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB8_11GroupValues6internBc_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            -      -            
+            |          
+            |--32.48%--_RNvXs_NtNtNtNtCs9tN8ZXsz6qy_24datafusion_physical_plan10aggregates12group_values15single_group_by9primitiveINtB4_20GroupValuesPrimitiveNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB8_11GroupValues6internBc_
+            |          |          
+            |          |--4.79%--{closure#0}<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --4.42%--0x558a8195b84f
+            |          |          
+            |          |--4.52%--write<(usize, u64)> (inlined)
+            |          |          write<(usize, u64)> (inlined)
+            |          |          insert_tagged_at_index<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          insert<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --1.95%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray6finishB8_
+            |          |                     alloc_impl_runtime (inlined)
+            |          |                     alloc_impl (inlined)
+            |          |                     allocate (inlined)
+            |          |                     box_new_uninit (inlined)
+            |          |                     new<alloc::sync::ArcInner<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>>> (inlined)
+            |          |                     new<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+            |          |                     finish<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--4.06%--next (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |          |--3.54%--0x558a8195b84f
+            |          |          |          
+            |          |           --0.52%--0x558a817384a7
+            |          |          
+            |          |--3.50%--find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --2.02%--0x558a8195b84f
+            |          |          
+            |          |--3.15%--is_bucket_full (inlined)
+            |          |          fix_insert_index (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --1.04%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray6finishB8_
+            |          |                     alloc_impl_runtime (inlined)
+            |          |                     alloc_impl (inlined)
+            |          |                     allocate (inlined)
+            |          |                     box_new_uninit (inlined)
+            |          |                     new<alloc::sync::ArcInner<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>>> (inlined)
+            |          |                     new<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+            |          |                     finish<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--2.45%--insert_tagged_at_index<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          insert<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --1.10%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray6finishB8_
+            |          |                     alloc_impl_runtime (inlined)
+            |          |                     alloc_impl (inlined)
+            |          |                     allocate (inlined)
+            |          |                     box_new_uninit (inlined)
+            |          |                     new<alloc::sync::ArcInner<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>>> (inlined)
+            |          |                     new<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+            |          |                     finish<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--1.38%--_mm_loadu_si128 (inlined)
+            |          |          load (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --1.27%--0x558a8195b84f
+            |          |          
+            |          |--1.21%--reserve<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          |          
+            |          |           --1.05%--0x558a8195b84f
+            |          |          
+            |          |--1.19%--match_tag (inlined)
+            |          |          |          
+            |          |           --0.70%--match_empty (inlined)
+            |          |                     find_or_find_insert_index_inner (inlined)
+            |          |                     find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |                     entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |                     intern<arrow_array::types::Int64Type> (inlined)
+            |          |                     |          
+            |          |                      --0.64%--0x558a8195b84f
+            |          |          
+            |          |--0.84%--fix_insert_index (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--0.61%--record_item_insert_at (inlined)
+            |          |          insert_tagged_at_index<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          insert<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--0.60%--intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |          |--0.60%--0x558a8195b84f
+            |          |          
+            |          |--0.55%--entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |           --0.50%--value_unchecked<arrow_array::types::Int64Type> (inlined)
+            |                     next<&arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+            |                     intern<arrow_array::types::Int64Type> (inlined)
+            |                     0x558a8195b84f
+            |          
+            |--14.48%--_mm_movemask_epi8 (inlined)
+            |          match_tag (inlined)
+            |          |          
+            |           --14.43%--find_or_find_insert_index_inner (inlined)
+            |                     find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |                     entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |                     intern<arrow_array::types::Int64Type> (inlined)
+            |                     |          
+            |                     |--13.46%--0x558a8195b84f
+            |                     |          
+            |                      --0.97%--0x558a817384a7
+            |          
+            |--4.33%--record_item_insert_at (inlined)
+            |          insert_tagged_at_index<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          insert<(usize, u64), allocator_api2::stable::alloc::global::Global> (inlined)
+            |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |           --2.66%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray6finishB8_
+            |                     alloc_impl_runtime (inlined)
+            |                     alloc_impl (inlined)
+            |                     allocate (inlined)
+            |                     box_new_uninit (inlined)
+            |                     new<alloc::sync::ArcInner<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>>> (inlined)
+            |                     new<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+            |                     finish<arrow_array::types::Int64Type> (inlined)
+            |          
+            |--2.01%--full (inlined)
+            |          find_or_find_insert_index_inner (inlined)
+            |          find_or_find_insert_index<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          entry<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#1}<arrow_array::types::Int64Type>, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Int64Type>> (inlined)
+            |          intern<arrow_array::types::Int64Type> (inlined)
+            |          |          
+            |           --1.89%--0x558a8195b84f
+            |          
+             --1.84%--push_mut<i64, alloc::alloc::Global> (inlined)
+                       push<i64, alloc::alloc::Global> (inlined)
+                       intern<arrow_array::types::Int64Type> (inlined)
+                       |          
+                        --0.84%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray6finishB8_
+                                  alloc_impl_runtime (inlined)
+                                  alloc_impl (inlined)
+                                  allocate (inlined)
+                                  box_new_uninit (inlined)
+                                  new<alloc::sync::ArcInner<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>>> (inlined)
+                                  new<arrow_array::array::primitive_array::PrimitiveArray<arrow_array::types::Int64Type>> (inlined)
+                                  finish<arrow_array::types::Int64Type> (inlined)
+
+    29.58%  infralab-distinct-probe  [.] _RINvMs6_NtCsexlGnTr1lu0_9hashbrown3rawINtB6_8RawTableTjyEE14reserve_rehashNCNvXs_NtNtNtNtCs9tN8ZXsz6qy_24datafusion_physical_plan10aggregates12group_values15single_group_by9primitiveINtB1h_20GroupValuesPrimitiveNtNtCs4MhKbW33GQE_11arrow_array5types24IntervalMonthDayNanoTypeENtB1l_11GroupValues6interns0_0EB1p_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         -      -            
+            |          
+            |--26.03%--_RINvMs6_NtCsexlGnTr1lu0_9hashbrown3rawINtB6_8RawTableTjyEE14reserve_rehashNCNvXs_NtNtNtNtCs9tN8ZXsz6qy_24datafusion_physical_plan10aggregates12group_values15single_group_by9primitiveINtB1h_20GroupValuesPrimitiveNtNtCs4MhKbW33GQE_11arrow_array5types10Date32TypeENtB1l_11GroupValues6interns0_0EB1p_ (inlined)
+            |          |          
+            |          |--11.32%--match_empty_or_deleted (inlined)
+            |          |          find_insert_index_in_group (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          |          
+            |          |           --10.78%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          |          
+            |          |--5.71%--fix_insert_index (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          |          
+            |          |           --5.16%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          |          
+            |          |--4.72%--find_insert_index_in_group (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          |          
+            |          |           --4.10%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          |          
+            |          |--2.29%--resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          |          
+            |          |           --1.81%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          |          
+            |          |--0.72%--find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          |          
+            |          |           --0.61%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          |          
+            |           --0.60%--is_bucket_full (inlined)
+            |                     fix_insert_index (inlined)
+            |                     find_insert_index (inlined)
+            |                     prepare_insert_index (inlined)
+            |                     resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |                     reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |                     reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |                     |          
+            |                      --0.59%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          
+            |--2.05%--lowest_set_bit (inlined)
+            |          find_insert_index_in_group (inlined)
+            |          find_insert_index (inlined)
+            |          prepare_insert_index (inlined)
+            |          resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+            |          reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+            |          |          
+            |           --1.83%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+            |          
+             --1.39%--find_insert_index_in_group (inlined)
+                       find_insert_index (inlined)
+                       prepare_insert_index (inlined)
+                       resize_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+                       reserve_rehash_inner<allocator_api2::stable::alloc::global::Global> (inlined)
+                       reserve_rehash<(usize, u64), allocator_api2::stable::alloc::global::Global, datafusion_physical_plan::aggregates::group_values::single_group_by::primitive::{impl#1}::intern::{closure_env#2}<arrow_array::types::Date32Type>> (inlined)
+                       |          
+                        --1.33%--_RNvMNtNtNtNtCs8ZKwes1zzDd_3std3sys3pal4unix4timeNtB2_8Timespec3now
+
+     2.64%  infralab-distinct-probe  [.] _RNvMsb_NtCs9tN8ZXsz6qy_24datafusion_physical_plan11repartitionNtB5_16BatchPartitioner14partition_iter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          -      -            
+            |          
+            |--1.91%--push_mut<u32, alloc::alloc::Global> (inlined)
+            |          push<u32, alloc::alloc::Global> (inlined)
+            |          partition_indices (inlined)
+            |          partition_iter (inlined)
+            |          0x558a816e10d7
+            |          
+             --0.55%--_RNvMsb_NtCs9tN8ZXsz6qy_24datafusion_physical_plan11repartitionNtB5_16BatchPartitioner14partition_iter
+
+     2.63%  libc.so.6                [.] __memmove_avx512_unaligned_erms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 -      -            
+            |
+            ---__memmove_avx512_unaligned_erms
+               |          
+               |--1.35%--_mi_memcpy (inlined)
+               |          _mi_theap_realloc_zero
+               |          |          
+               |           --1.29%--_RNvMs5_NtCsgFX3jaOk65H_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs4MhKbW33GQE_11arrow_array.llvm.7171761312728286018
+               |                     grow_impl_runtime (inlined)
+               |                     grow_impl (inlined)
+               |                     grow (inlined)
+               |                     finish_grow<alloc::alloc::Global> (inlined)
+               |                     |          
+               |                      --1.23%--0x558a8195b84f
+               |          
+                --0.81%--_RNvXs_NtNtCsfhC4Wqi4Cwi_12arrow_select8coalesce9primitiveINtB4_24InProgressPrimitiveArrayNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtB6_15InProgressArray9copy_rowsB8_
+                          append_elements_unreserved<i64, alloc::alloc::Global> (inlined)
+                          append_elements<i64, alloc::alloc::Global> (inlined)
+                          spec_extend<i64, alloc::alloc::Global> (inlined)
+                          extend_from_slice<i64, alloc::alloc::Global> (inlined)
+                          copy_rows<arrow_array::types::Int64Type> (inlined)
+
+     1.63%  infralab-distinct-probe  [.] _RNvXNtNtCsgFX3jaOk65H_5alloc3vec14spec_from_iterINtB4_3VecxEINtB2_12SpecFromIterxINtNtNtNtCskADBYZwJmSU_4core4iter8adapters3map3MapINtNtNtB1q_5slice4iter4ItermENCINvNtCsfhC4Wqi4Cwi_12arrow_select4take11take_nativexNtNtCs4MhKbW33GQE_11arrow_array5types10UInt32TypeEs0_0EE9from_iterB2F_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   -      -            
+            |          
+             --1.58%--_RNvXNtNtCsgFX3jaOk65H_5alloc3vec14spec_from_iterINtB4_3VecxEINtB2_12SpecFromIterxINtNtNtNtCskADBYZwJmSU_4core4iter8adapters3map3MapINtNtNtB1q_5slice4iter4ItermENCINvNtCsfhC4Wqi4Cwi_12arrow_select4take11take_nativexNtNtCs4MhKbW33GQE_11arrow_array5types10UInt32TypeEs0_0EE9from_iterB2F_
+                       |          
+                        --1.51%--{closure#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>> (inlined)
+                                  {closure#0}<i64, alloc::vec::{impl#22}::extend_trusted::{closure_env#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>>> (inlined)
+                                  {closure#0}<&u32, i64, (), arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<i64, alloc::vec::{impl#22}::extend_trusted::{closure_env#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>>>> (inlined)
+                                  fold<u32, (), core::iter::adapters::map::map_fold::{closure_env#0}<&u32, i64, (), arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<i64, alloc::vec::{impl#22}::extend_trusted::{closure_env#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>>>>> (inlined)
+                                  fold<i64, core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>, (), core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<i64, alloc::vec::{impl#22}::extend_trusted::{closure_env#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>>>> (inlined)
+                                  for_each<core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>, alloc::vec::{impl#22}::extend_trusted::{closure_env#0}<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>>> (inlined)
+                                  extend_trusted<i64, alloc::alloc::Global, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>> (inlined)
+                                  spec_extend<i64, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>, alloc::alloc::Global> (inlined)
+                                  from_iter<i64, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>> (inlined)
+                                  from_iter<i64, core::iter::adapters::map::Map<core::slice::iter::Iter<u32>, arrow_select::take::take_native::{closure_env#2}<i64, arrow_array::types::UInt32Type>>> (inlined)
+                                  |          
+                                   --1.46%--0xffff
+
+     1.32%  infralab-distinct-probe  [.] _RINvNtCs2scsCU4uNnx_17datafusion_common10hash_utils17hash_single_arrayNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateECs9tN8ZXsz6qy_24datafusion_physical_plan.llvm.13052187711576933741                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          -      -            
+            |          
+             --0.88%--_RINvNtCs2scsCU4uNnx_17datafusion_common10hash_utils17hash_single_arrayNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateECs9tN8ZXsz6qy_24datafusion_physical_plan.llvm.13052187711576933741
+
+     0.94%  libc.so.6                [.] __memset_avx512_unaligned_erms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  -      -            
+            |
+            ---__memset_avx512_unaligned_erms
+
+
+
+#
+# (Tip: To show information about system the samples were collected on use perf report --header)
+#

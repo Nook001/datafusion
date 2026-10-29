@@ -1,0 +1,32 @@
+{
+  "quick": {
+    "processes": 3,
+    "records": 9,
+    "measured": 6,
+    "max_process_peak_rss_kib": 179800
+  },
+  "matrix": {
+    "processes": 96,
+    "records": 384,
+    "measured": 288,
+    "max_process_peak_rss_kib": 2154772
+  },
+  "controls": {
+    "processes": 18,
+    "records": 108,
+    "measured": 90,
+    "max_process_peak_rss_kib": 1054460
+  },
+  "view": {
+    "processes": 24,
+    "records": 96,
+    "measured": 72,
+    "max_process_peak_rss_kib": 2139496
+  },
+  "final-smoke": {
+    "processes": 3,
+    "records": 9,
+    "measured": 6,
+    "max_process_peak_rss_kib": 173444
+  }
+}

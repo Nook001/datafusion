@@ -1,0 +1,7 @@
+{
+  "retrieved_at": "2026-10-29T19:05:44.123Z",
+  "query": "repo:apache/datafusion is:open MultiDistinct",
+  "result": {
+    "issues": []
+  }
+}

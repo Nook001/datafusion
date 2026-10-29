@@ -1,0 +1,13 @@
+
+ Performance counter stats for 'true':
+
+              0.36 msec task-clock:u                     #    0.280 CPUs utilized             
+            204835      cycles:u                         #    0.563 GHz                       
+            187179      instructions:u                   #    0.91  insn per cycle            
+
+       0.001300007 seconds time elapsed
+
+       0.000000000 seconds user
+       0.001357000 seconds sys
+
+

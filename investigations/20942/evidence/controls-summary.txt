@@ -1,0 +1,10 @@
+i64  d=2000000 p=1 null= 0 split           :    67.20 ms [66.75, 79.75], pool 91.69 MiB, merge 0.00 ms
+i64  d=2000000 p=1 null= 0 split_no_rewrite:    51.34 ms [50.79, 52.48], pool 36.00 MiB, merge 0.00 ms
+i64  d=2000000 p=4 null= 0 split           :    21.10 ms [19.57, 24.42], pool 92.06 MiB, merge 0.00 ms
+i64  d=2000000 p=4 null= 0 split_no_rewrite:    52.01 ms [51.85, 52.23], pool 36.00 MiB, merge 39.65 ms
+i64  d=2000000 p=4 null= 0 same_argument   :    22.58 ms [20.61, 30.62], pool 92.06 MiB, merge 0.00 ms
+utf8 d=2000000 p=1 null= 0 split           :   139.54 ms [136.64, 141.00], pool 275.75 MiB, merge 0.00 ms
+utf8 d=2000000 p=1 null= 0 split_no_rewrite:   120.46 ms [119.76, 122.54], pool 236.06 MiB, merge 0.00 ms
+utf8 d=2000000 p=4 null= 0 split           :    51.65 ms [49.22, 54.04], pool 276.64 MiB, merge 0.00 ms
+utf8 d=2000000 p=4 null= 0 split_no_rewrite:   159.15 ms [156.55, 173.01], pool 239.81 MiB, merge 124.77 ms
+utf8 d=2000000 p=4 null= 0 same_argument   :    51.95 ms [50.34, 52.90], pool 276.67 MiB, merge 0.00 ms

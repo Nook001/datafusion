@@ -1,0 +1,12 @@
+{
+  "retrieved_at": "2026-10-29T19:04:52.589Z",
+  "query": "repo:apache/datafusion 23338",
+  "result": {
+    "error": "GitHub API error 403: {\n  \"documentation_url\": \"https://docs.github.com/free-pro-team@latest/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits\",\n  \"message\": \"You have exceeded a secondary rate limit. Please wait a few minutes before you try again. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) If you reach out to GitHub Support for help, please include the request ID 9590:1500A:BE8F14A:1167CB9A:6AE398C0.\"\n}",
+    "error_code": "FORBIDDEN",
+    "error_data": {
+      "documentation_url": "https://docs.github.com/free-pro-team@latest/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+      "message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service) If you reach out to GitHub Support for help, please include the request ID 9590:1500A:BE8F14A:1167CB9A:6AE398C0."
+    }
+  }
+}

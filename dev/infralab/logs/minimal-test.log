@@ -1,0 +1,19 @@
+   Compiling tokio v1.54.1
+   Compiling datafusion-common-runtime v55.1.0 (/dcs/23/u5569819/Projects/InfraLab/projects/datafusion/datafusion/common-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.76s
+     Running unittests src/lib.rs (/tmp/infralab-datafusion/target/debug/deps/datafusion_common_runtime-5e3fdda8b8803a9d)
+
+running 4 tests
+test common::tests::cancel_not_started_task ... ok
+test common::tests::cancel_ongoing_task ... ok
+test common::tests::panic_resume - should panic ... ok
+test common::tests::runtime_shutdown ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests datafusion_common_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

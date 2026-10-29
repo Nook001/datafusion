@@ -1,0 +1,3 @@
+Filesystem                                             Size  Used Avail Use% Mounted on
+alpaca:/export/ug2_a/23                                7.0T  5.1T  1.6T  77% /dcs/23
+/dev/mapper/luks-fab12c87-918f-43f0-8928-73db690fb5e8  1.8T   55G  1.7T   4% /

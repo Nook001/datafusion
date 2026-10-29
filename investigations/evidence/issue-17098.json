@@ -1,0 +1,216 @@
+{
+  "retrieved_at": "2026-10-29T19:04:20.353Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/17098",
+    "title": "Optimize `ORDER BY time DESC LIMIT 1` queries ( TopK or aggr rewrite)",
+    "issue_number": 17098,
+    "body": "### Is your feature request related to a problem or challenge?\n\nThis came up in the context of an internal investigation I did at InfluxData. I am not sure  how common this use case is, but since I spent time analyzing it, I figured I would share it here.\n\nWe have a query like\n```\nSELECT .. ORDER BY time DESC LIMIT 1;\n```\n\nThe plan looks like this:\n```sql\n  SortExec: TopK(fetch=1), expr=[time@0 DESC], ...]\n    DataSourceExec: file_groups={1 groups: [...]]\n```\n\nThis uses the TopK operator to find the single largest value in the `time` column. Clearly a better\napproach would be a query like `SELECT MIN(time)`. However the metrics from our query show that the TopK operator is taking a significant time (there are 200M input rows):\n```\n  SortExec: TopK(fetch=1), expr=[time@0 DESC], preserve_partitioning=[true], metrics=[output_rows=2, elapsed_compute=818.779943ms, row_replacements=2]\n```\n\n\n### Describe the solution you'd like\n\nMake queries like the above go faster\n\n\nHere is a test query you could use to see the difference:\n\n```sql\n> select value from generate_series(1, 10000000000) ORDER BY value LIMIT 1;\n+-------+\n| value |\n+-------+\n| 1     |\n+-------+\n1 row(s) fetched.\nElapsed 5.649 seconds.\n```\n\nHere is the plan\n```sql\n> explain format indent select value from generate_series(1, 10000000000) ORDER BY value LIMIT 1;\n+---------------+---------------------------------------------------------------------------------------------------------------+\n| plan_type     | plan                                                                                                          |\n+---------------+---------------------------------------------------------------------------------------------------------------+\n| logical_plan  | Sort: generate_series().value ASC NULLS LAST, fetch=1                                                         |\n|               |   TableScan: generate_series() projection=[value]                                                             |\n| physical_plan | SortExec: TopK(fetch=1), expr=[value@0 ASC NULLS LAST], preserve_partitioning=[false]                         |\n|               |   LazyMemoryExec: partitions=1, batch_generators=[generate_series: start=1, end=10000000000, batch_size=8192] |\n|               |                                                                                                               |\n+---------------+---------------------------------------------------------------------------------------------------------------+\n```\n\nExplain Analyze showing that the TopK operator takes 1.3s of compute time\n```sql\n> explain analyze select value from generate_series(1, 10000000000) ORDER BY value LIMIT 1;\n+-------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n| plan_type         | plan                                                                                                                                                                                   |\n+-------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n| Plan with Metrics | SortExec: TopK(fetch=1), expr=[value@0 ASC NULLS LAST], preserve_partitioning=[false], filter=[value@0 < 1], metrics=[output_rows=1, elapsed_compute=1.313177866s, row_replacements=1] |\n|                   |   LazyMemoryExec: partitions=1, batch_generators=[generate_series: start=1, end=10000000000, batch_size=8192], metrics=[output_rows=10000000000, elapsed_compute=4.835229677s]         |\n|                   |                                                                                                                                                                                        |\n+-------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+\n1 row(s) fetched.\nElapsed 6.272 seconds.\n```\n\n\n### Describe alternatives you've considered\n\n## Option 1: Query rewrite\nOne possibility is to rewrite queries automatically to use `min` / `max` rather than ORDER BY / LIMIT.\n\n## Option 2: Improve the TopK operators performance\n\nAnother possibility is to improve the TopK operator itself\n\nEhen I looked at the TopK operator,\ncode https://github.com/apache/datafusion/blob/9bb309c88ae94d495b487a97cb635c52225689e8/datafusion/physical-plan/src/topk/mod.rs#L48-L101\n\nI found it uses the Row format to compare entries. We could potentially optimize\nthis code with a specialized implementation for single columns when we know the type, similarly\nto how we have specialized implementations for single column group by columns:\n\nhttps://github.com/apache/datafusion/blob/1d1f3534b4ef790d376ed6fde69a3b404c8c988d/datafusion/physical-plan/src/aggregates/group_values/single_group_by/mod.rs#L18-L22\n\n\n### Additional context\n\n_No response_",
+    "state": "open",
+    "user": {
+      "login": "alamb",
+      "name": "alamb",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+      "id": 490673
+    },
+    "assignees": null,
+    "labels": [
+      {
+        "name": "enhancement",
+        "color": "a2eeef",
+        "description": "New feature or request"
+      },
+      {
+        "name": "performance",
+        "color": "EA11B6",
+        "description": "Make DataFusion faster"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 8,
+    "created_at": "2025-08-08T18:24:57Z",
+    "updated_at": "2026-01-29T07:27:51Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/17098",
+    "display_title": "Optimize `ORDER BY time DESC LIMIT 1` queries ( TopK or aggr rewrite)"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3176046824",
+      "body": "Hi @alamb , I’d like to take this issue if no one else is currently working on it.",
+      "user": {
+        "login": "Thearas",
+        "name": "Thearas",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/44015907?v=4",
+        "id": 44015907
+      },
+      "id": 3176046824,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/alamb/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/alamb\">@alamb</a> , I’d like to take this issue if no one else is currently working on it.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3180893182",
+      "body": "sure -- feel free @Thearas  \n\nHowever, FYI I am not sure how easy/hard this will be ",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 3180893182,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">sure -- feel free <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Thearas/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Thearas\">@Thearas</a></p>\n<p dir=\"auto\">However, FYI I am not sure how easy/hard this will be</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3213511486",
+      "body": "take",
+      "user": {
+        "login": "Thearas",
+        "name": "Thearas",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/44015907?v=4",
+        "id": 44015907
+      },
+      "id": 3213511486,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">take</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3480488523",
+      "body": "Hi @alamb, which benchmark should I run to verify the improvement?",
+      "user": {
+        "login": "Thearas",
+        "name": "Thearas",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/44015907?v=4",
+        "id": 44015907
+      },
+      "id": 3480488523,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/alamb/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/alamb\">@alamb</a>, which benchmark should I run to verify the improvement?</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3482656082",
+      "body": "> Hi [@alamb](https://github.com/alamb), which benchmark should I run to verify the improvement?\n\nHi @Thearas   -- I am not sure we have a specific benchmark yet -- that might be a good first PR\n\nPerhaps you could add a \"extended\" clickbench query here https://github.com/apache/datafusion/tree/main/benchmarks/queries/clickbench#extended-queries",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 3482656082,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<blockquote>\n<p dir=\"auto\">Hi <a href=\"https://github.com/alamb\">@alamb</a>, which benchmark should I run to verify the improvement?</p>\n</blockquote>\n<p dir=\"auto\">Hi <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Thearas/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Thearas\">@Thearas</a>   -- I am not sure we have a specific benchmark yet -- that might be a good first PR</p>\n<p dir=\"auto\">Perhaps you could add a \"extended\" clickbench query here <a href=\"https://github.com/apache/datafusion/tree/main/benchmarks/queries/clickbench#extended-queries\">https://github.com/apache/datafusion/tree/main/benchmarks/queries/clickbench#extended-queries</a></p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3485935596",
+      "body": "@alamb In `Option 2: Improve the TopK operators performance`, do you mean we should use `ScalarValue` but not `Array(or the encoded bytes)` in `TopKHeap` for caching and comparing?\n\nI find `single column group by` impl multiple kind of `GroupValues`, so I'm not sure.",
+      "user": {
+        "login": "Thearas",
+        "name": "Thearas",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/44015907?v=4",
+        "id": 44015907
+      },
+      "id": 3485935596,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/alamb/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/alamb\">@alamb</a> In <code class=\"notranslate\">Option 2: Improve the TopK operators performance</code>, do you mean we should use <code class=\"notranslate\">ScalarValue</code> but not <code class=\"notranslate\">Array(or the encoded bytes)</code> in <code class=\"notranslate\">TopKHeap</code> for caching and comparing?</p>\n<p dir=\"auto\">I find <code class=\"notranslate\">single column group by</code> impl multiple kind of <code class=\"notranslate\">GroupValues</code>, so I'm not sure.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3486760255",
+      "body": "I think the idea there is to specialize the code for concrete types (e.g. `ArrowNativeType`) so not `ScalarValue`, but `f64`, `u32`, etc. \n\n\nAnother option that we can try is to use https://docs.rs/arrow/latest/arrow/compute/kernels/sort/fn.sort_limit.html for small Ns (e.g. N <= 50) before converting to rows.\nThis does still a bit of unnecessary work (sort instead of partition) but for small N it should be OK. If it works out we could also implement / include a `top` kernel that only does the partitioning, rather than sorting. \n\n",
+      "user": {
+        "login": "Dandandan",
+        "name": "Dandandan",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/163737?v=4",
+        "id": 163737
+      },
+      "id": 3486760255,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">I think the idea there is to specialize the code for concrete types (e.g. <code class=\"notranslate\">ArrowNativeType</code>) so not <code class=\"notranslate\">ScalarValue</code>, but <code class=\"notranslate\">f64</code>, <code class=\"notranslate\">u32</code>, etc.</p>\n<p dir=\"auto\">Another option that we can try is to use <a href=\"https://docs.rs/arrow/latest/arrow/compute/kernels/sort/fn.sort_limit.html\" rel=\"nofollow\">https://docs.rs/arrow/latest/arrow/compute/kernels/sort/fn.sort_limit.html</a> for small Ns (e.g. N &lt;= 50) before converting to rows.<br>\nThis does still a bit of unnecessary work (sort instead of partition) but for small N it should be OK. If it works out we could also implement / include a <code class=\"notranslate\">top</code> kernel that only does the partitioning, rather than sorting.</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/17098#issuecomment-3815949890",
+      "body": "untake",
+      "user": {
+        "login": "Thearas",
+        "name": "Thearas",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/44015907?v=4",
+        "id": 44015907
+      },
+      "id": 3815949890,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">untake</p>"
+    }
+  ]
+}

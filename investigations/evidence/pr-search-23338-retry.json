@@ -1,0 +1,7 @@
+{
+  "retrieved_at": "2026-10-29T19:05:43.448Z",
+  "query": "repo:apache/datafusion 23338",
+  "result": {
+    "issues": []
+  }
+}

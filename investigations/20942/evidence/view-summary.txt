@@ -1,0 +1,12 @@
+view d= 200000 p=1 null= 0 native          :   263.43 ms [260.08, 274.89], pool 61.69 MiB, merge 0.00 ms
+view d= 200000 p=1 null= 0 split           :   137.78 ms [132.75, 141.81], pool 21.45 MiB, merge 0.00 ms
+view d= 200000 p=1 null= 0 split_no_rewrite:   124.38 ms [123.92, 124.78], pool 20.56 MiB, merge 0.00 ms
+view d= 200000 p=4 null= 0 native          :   183.17 ms [181.92, 188.72], pool 246.75 MiB, merge 96.38 ms
+view d= 200000 p=4 null= 0 split           :    70.68 ms [69.64, 72.09], pool 136.66 MiB, merge 0.00 ms
+view d= 200000 p=4 null= 0 split_no_rewrite:   118.55 ms [116.10, 122.74], pool 145.40 MiB, merge 82.16 ms
+view d=2000000 p=1 null= 0 native          :   456.84 ms [430.19, 471.80], pool 702.94 MiB, merge 0.00 ms
+view d=2000000 p=1 null= 0 split           :   430.57 ms [415.42, 439.96], pool 242.07 MiB, merge 0.00 ms
+view d=2000000 p=1 null= 0 split_no_rewrite:   394.66 ms [387.29, 397.75], pool 234.31 MiB, merge 0.00 ms
+view d=2000000 p=4 null= 0 native          :   535.65 ms [520.94, 567.50], pool 714.20 MiB, merge 411.79 ms
+view d=2000000 p=4 null= 0 split           :   129.01 ms [125.81, 132.43], pool 659.46 MiB, merge 0.00 ms
+view d=2000000 p=4 null= 0 split_no_rewrite:   470.13 ms [467.07, 475.25], pool 355.88 MiB, merge 425.48 ms

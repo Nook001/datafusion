@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: See the NOTICE file distributed with this work for additional information regarding copyright ownership
+// SPDX-FileContributor: Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements
+// InfraLab diagnostic harness: no optimizer or execution-engine modifications.
+
+use std::{env, fs, sync::Arc};
+
+use datafusion::{
+    arrow::{
+        array::{Array, ArrayRef, Int64Array, StringArray, StringViewArray},
+        datatypes::{DataType, Field, Schema},
+        record_batch::RecordBatch,
+    },
+    common::instant::Instant,
+    datasource::MemTable,
+    execution::{
+        memory_pool::{GreedyMemoryPool, MemoryPool, PeakRecordingPool},
+        runtime_env::RuntimeEnvBuilder,
+        session_state::SessionStateBuilder,
+    },
+    optimizer::optimizer::Optimizer,
+    physical_plan::{ExecutionPlan, collect, display::DisplayableExecutionPlan},
+    prelude::{SessionConfig, SessionContext},
+};
+use serde_json::{Value, json};
+
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[derive(Debug)]
+struct Options {
+    rows: usize,
+    cardinality: usize,
+    columns: usize,
+    partitions: usize,
+    batch_size: usize,
+    iterations: usize,
+    null_every: usize,
+    kind: String,
+    mode: String,
+}
+
+fn options() -> Options {
+    let args: Vec<String> = env::args().collect();
+    let value = |key: &str, default: &str| {
+        args.windows(2)
+            .find(|pair| pair[0] == key)
+            .map(|pair| pair[1].clone())
+            .unwrap_or_else(|| default.to_string())
+    };
+    Options {
+        rows: value("--rows", "2000000").parse().unwrap(),
+        cardinality: value("--cardinality", "200000").parse().unwrap(),
+        columns: value("--columns", "3").parse().unwrap(),
+        partitions: value("--partitions", "4").parse().unwrap(),
+        batch_size: value("--batch-size", "8192").parse().unwrap(),
+        iterations: value("--iterations", "5").parse().unwrap(),
+        null_every: value("--null-every", "0").parse().unwrap(),
+        kind: value("--kind", "i64"),
+        mode: value("--mode", "native"),
+    }
+}
+
+fn source(opts: &Options) -> (Arc<MemTable>, Vec<i64>, usize) {
+    assert!(opts.cardinality > 0 && opts.rows > 0 && opts.partitions > 0);
+    let dtype = match opts.kind.as_str() {
+        "i64" => DataType::Int64,
+        "utf8" => DataType::Utf8,
+        "view" => DataType::Utf8View,
+        other => panic!("unknown kind {other}"),
+    };
+    let schema = Arc::new(Schema::new(
+        (0..opts.columns)
+            .map(|i| Field::new(format!("a{i}"), dtype.clone(), true))
+            .collect::<Vec<_>>(),
+    ));
+    let mut partitions = Vec::new();
+    let mut input_bytes = 0;
+    for p in 0..opts.partitions {
+        let start = opts.rows * p / opts.partitions;
+        let end = opts.rows * (p + 1) / opts.partitions;
+        let mut batches = Vec::new();
+        for first in (start..end).step_by(opts.batch_size) {
+            let last = (first + opts.batch_size).min(end);
+            let columns = (0..opts.columns)
+                .map(|c| {
+                    let values = (first..last).map(|row| {
+                        if opts.null_every != 0 && row % opts.null_every == 0 {
+                            None
+                        } else {
+                            Some(((row + c * 7) % opts.cardinality) as i64)
+                        }
+                    });
+                    match opts.kind.as_str() {
+                        "i64" => Arc::new(Int64Array::from_iter(values)) as ArrayRef,
+                        "utf8" => Arc::new(StringArray::from_iter(values.map(|v| {
+                            v.map(|v| format!("column{c}-key-{v:016x}-payload"))
+                        }))) as ArrayRef,
+                        "view" => Arc::new(StringViewArray::from_iter(values.map(|v| {
+                            v.map(|v| format!("column{c}-key-{v:016x}-payload"))
+                        }))) as ArrayRef,
+                        _ => unreachable!(),
+                    }
+                })
+                .collect();
+            let batch = RecordBatch::try_new(Arc::clone(&schema), columns).unwrap();
+            input_bytes += batch.get_array_memory_size();
+            batches.push(batch);
+        }
+        partitions.push(batches);
+    }
+    // Independent oracle on numeric domain identifiers, including null controls.
+    let expected = (0..opts.columns)
+        .map(|c| {
+            let mut seen = vec![false; opts.cardinality];
+            for row in 0..opts.rows {
+                if opts.null_every == 0 || row % opts.null_every != 0 {
+                    seen[(row + c * 7) % opts.cardinality] = true;
+                }
+            }
+            seen.into_iter().filter(|v| *v).count() as i64
+        })
+        .collect();
+    (
+        Arc::new(MemTable::try_new(schema, partitions).unwrap()),
+        expected,
+        input_bytes,
+    )
+}
+
+fn query(opts: &Options) -> String {
+    match opts.mode.as_str() {
+        "native" | "same_argument" => {
+            let aggs = (0..opts.columns)
+                .map(|c| {
+                    let a = if opts.mode == "same_argument" { 0 } else { c };
+                    format!("count(DISTINCT a{a}) AS c{c}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("SELECT {aggs} FROM t")
+        }
+        "split" | "split_no_rewrite" => {
+            let outputs = (0..opts.columns)
+                .map(|c| format!("q{c}.c{c}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let branches = (0..opts.columns)
+                .map(|c| format!("(SELECT count(DISTINCT a{c}) AS c{c} FROM t) AS q{c}"))
+                .collect::<Vec<_>>()
+                .join(" CROSS JOIN ");
+            format!("SELECT {outputs} FROM {branches}")
+        }
+        other => panic!("unknown mode {other}"),
+    }
+}
+
+fn node_metrics(plan: &Arc<dyn ExecutionPlan>, path: &str, output: &mut Vec<Value>) {
+    let metrics = plan
+        .metrics()
+        .map(|set| {
+            set.iter()
+                .map(|m| json!({"partition":m.partition(), "name":m.value().name(), "value":m.value().as_usize()}))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    output.push(json!({"path":path, "node":plan.name(), "metrics":metrics}));
+    for (i, child) in plan.children().into_iter().enumerate() {
+        node_metrics(child, &format!("{path}/{i}"), output);
+    }
+}
+
+fn rss_kib(key: &str) -> usize {
+    fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix(key))
+        .and_then(|value| value.split_whitespace().next())
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+async fn run(opts: &Options) -> Result<(), Box<dyn std::error::Error>> {
+    let prep = Instant::now();
+    let (table, expected, input_bytes) = source(opts);
+    let prep_ms = prep.elapsed().as_secs_f64() * 1000.0;
+    let pool = Arc::new(PeakRecordingPool::new(Arc::new(GreedyMemoryPool::new(
+        4 * 1024 * 1024 * 1024,
+    ))));
+    let runtime = RuntimeEnvBuilder::new()
+        .with_memory_pool(Arc::clone(&pool) as _)
+        .build_arc()?;
+    let mut state = SessionStateBuilder::new()
+        .with_default_features()
+        .with_config(
+            SessionConfig::new()
+                .with_target_partitions(opts.partitions)
+                .with_batch_size(opts.batch_size),
+        )
+        .with_runtime_env(runtime);
+    if opts.mode == "split_no_rewrite" {
+        state = state.with_optimizer_rules(
+            Optimizer::new()
+                .rules
+                .into_iter()
+                .filter(|r| r.name() != "single_distinct_aggregation_to_group_by")
+                .collect(),
+        );
+    }
+    let ctx = SessionContext::new_with_state(state.build());
+    ctx.register_table("t", table)?;
+    let sql = query(opts);
+    let baseline_rss_kib = rss_kib("VmRSS:");
+    // Fresh physical plans prevent metrics accumulating across repetitions.
+    for iteration in 0..=opts.iterations {
+        pool.reset_peak();
+        let planning = Instant::now();
+        let df = ctx.sql(&sql).await?;
+        let logical = df
+            .clone()
+            .into_optimized_plan()?
+            .display_indent()
+            .to_string();
+        let plan = df.create_physical_plan().await?;
+        let planning_ms = planning.elapsed().as_secs_f64() * 1000.0;
+        let start = Instant::now();
+        let result = collect(Arc::clone(&plan), ctx.task_ctx()).await?;
+        let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(result.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
+        let values = result[0]
+            .columns()
+            .iter()
+            .map(|a| {
+                assert!(!a.is_null(0));
+                a.as_any().downcast_ref::<Int64Array>().unwrap().value(0)
+            })
+            .collect::<Vec<_>>();
+        let oracle = if opts.mode == "same_argument" {
+            vec![expected[0]; opts.columns]
+        } else {
+            expected.clone()
+        };
+        assert_eq!(values, oracle, "SQL result differs from independent oracle");
+        let mut metrics = Vec::new();
+        node_metrics(&plan, "0", &mut metrics);
+        println!(
+            "{}",
+            json!({
+                "rows":opts.rows,"cardinality":opts.cardinality,"columns":opts.columns,
+                "partitions":opts.partitions,"batch_size":opts.batch_size,"kind":opts.kind,
+                "mode":opts.mode,"null_every":opts.null_every,"iteration":iteration,
+                "warmup":iteration == 0,"execution_ms":elapsed_ms,"planning_ms":planning_ms,
+                "preparation_ms":prep_ms,"input_array_bytes":input_bytes,
+                "pool_peak_bytes":pool.peak_reserved(),"pool_reserved_after":pool.reserved(),
+                "baseline_rss_kib":baseline_rss_kib,"process_peak_rss_kib":rss_kib("VmHWM:"),
+                "result":values,"sql":sql,"logical_plan":logical,
+                "physical_plan":DisplayableExecutionPlan::with_metrics(plan.as_ref()).indent(true).to_string(),
+                "node_metrics":metrics
+            })
+        );
+    }
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let opts = options();
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(6)
+        .enable_all()
+        .build()?
+        .block_on(run(&opts))
+}

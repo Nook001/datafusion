@@ -1,0 +1,57 @@
+{
+  "retrieved_at": "2026-10-29T19:04:24.395Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/26705",
+    "title": "Partial aggregate state reaches the final aggregate without a memory reservation (median, array_agg)",
+    "issue_number": 26705,
+    "body": "### Describe the bug\n\nFor aggregates whose state holds every input value, such as `median`, `percentile_cont` and `array_agg`, the state moves from the partial aggregate to the final aggregate without a memory reservation. The partial aggregate emits its whole state as one batch, then its stream ends and releases its reservation. The final aggregate reserves memory only after it has merged a batch. In between, states as large as the input are held unreserved, so a plan with more than one partition uses far more memory than the pool allows.\n\n### To Reproduce\n\nRun each query in its own `datafusion-cli` process (`/usr/bin/time -l` is macOS; use `-v` on Linux):\n\n```sh\n# Query 1\n/usr/bin/time -l datafusion-cli -m 300m \\\n  -c \"SET datafusion.execution.target_partitions = 1;\" \\\n  -c \"SELECT median(v) FROM generate_series(1, 30000000) AS t(v);\"\n\n# Query 2\n/usr/bin/time -l datafusion-cli -m 300m \\\n  -c \"SET datafusion.execution.target_partitions = 4;\" \\\n  -c \"SELECT median(v) FROM generate_series(1, 30000000) AS t(v);\"\n```\n\n### Expected behavior\n\n| Query | Plan | Peak RSS, 6 runs each (300 MB limit) | Expected |\n|---|---|---|---|\n| 1 | `AggregateExec: mode=Single` | 519 MB every run | (baseline) |\n| 2 | `Partial` -> `Final` | 656 MB to 939 MB | About the same as Query 1: the extra memory is the partial states, which should be reserved while held |\n\nQuery 1 is above the limit for a separate reason: its value buffer reallocates into one twice its size before freeing the old one, the same shape as #25606.\n\n### Additional context\n\n- The partial `state()` moves all values into a single list value: [percentile_cont.rs#L469-L495](https://github.com/apache/datafusion/blob/039c0b99d5b05e73ff5def029c0131b76b481c6f/datafusion/functions-aggregate/src/percentile_cont.rs#L469-L495).\n- `AggregateStream` grows its reservation only after a batch has been aggregated: [aggregate_stream.rs#L407-L411](https://github.com/apache/datafusion/blob/039c0b99d5b05e73ff5def029c0131b76b481c6f/datafusion/physical-plan/src/aggregates/aggregate_stream.rs#L407-L411).\n- Counting allocations against reservations (the approach of #25651) at 10M rows, the final aggregate had 96 bytes reserved while 147 MB was allocated. `array_agg(s) ... GROUP BY v % 10` shows the same gap.\n- One direction: the final aggregate reserves an incoming state batch before merging it, since the contract in `memory_pool/mod.rs` makes the operator that holds batches responsible for them.\n- Related: #25851, #26701.\n\n### Willingness to contribute\n\nI'm not planning to fix this myself, so anyone is welcome to pick it up. Feel free to ping me with questions about the cause or when you'd like a review.\n",
+    "state": "open",
+    "user": {
+      "login": "jayzhan211",
+      "name": "jayzhan211",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/15869383?v=4",
+      "id": 15869383
+    },
+    "assignees": null,
+    "labels": [
+      {
+        "name": "bug",
+        "color": "d73a4a",
+        "description": "Something isn't working"
+      }
+    ],
+    "milestone": null,
+    "state_reason": null,
+    "comments": 1,
+    "created_at": "2026-10-24T09:58:54Z",
+    "updated_at": "2026-10-25T07:15:28Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/26705",
+    "display_title": "Partial aggregate state reaches the final aggregate without a memory reservation (median, array_agg)"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/26705#issuecomment-6394774867",
+      "body": "take\n",
+      "user": {
+        "login": "mohitgurav20",
+        "name": "mohitgurav20",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/277221174?v=4",
+        "id": 277221174
+      },
+      "id": 6394774867,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">take</p>"
+    }
+  ]
+}

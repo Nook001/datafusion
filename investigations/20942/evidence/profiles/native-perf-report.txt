@@ -1,0 +1,256 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 1K of event 'cycles:u'
+# Event count (approx.): 34104864882
+#
+# Overhead  Shared Object            Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      IPC   [IPC Coverage]
+# ........  .......................  ..........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................  ....................
+#
+    48.39%  infralab-distinct-probe  [.] _RNvMs1_NtCs3BTM885nGDo_9hashbrown3mapINtB5_7HashMapxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE6insertCsgLKfj5YsOth_30datafusion_functions_aggregate                                                                                                                                                                                                                                                                                                                                                                                                                                -      -            
+            |          
+            |--40.06%--_RNvMs1_NtCs3BTM885nGDo_9hashbrown3mapINtB5_7HashMapxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE6insertCsgLKfj5YsOth_30datafusion_functions_aggregate
+            |          |          
+            |          |--9.08%--find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |          |--8.01%--insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          |          
+            |          |           --1.07%--_RNvMs1_NtCs3BTM885nGDo_9hashbrown3mapINtB5_7HashMapxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE6insertCsgLKfj5YsOth_30datafusion_functions_aggregate
+            |          |                     |          
+            |          |                      --0.58%--0x559a36822c77
+            |          |          
+            |          |--6.12%--is_bucket_full (inlined)
+            |          |          fix_insert_index (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          |          
+            |          |           --2.08%--0x3
+            |          |          
+            |          |--5.78%--match_tag (inlined)
+            |          |          |          
+            |          |           --5.35%--find_or_find_insert_index_inner (inlined)
+            |          |                     find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |                     insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |          |--4.25%--write<(i64, ())> (inlined)
+            |          |          write<(i64, ())> (inlined)
+            |          |          insert_tagged_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          |          insert_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          |          
+            |          |           --4.25%--0x3
+            |          |          
+            |          |--3.57%--next (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |          |--2.55%--find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --2.44%--insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |          |--2.35%--reserve<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |          |--1.42%--insert_tagged_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          |          insert_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          |          
+            |          |           --0.88%--0x3
+            |          |          
+            |          |--1.17%--fix_insert_index (inlined)
+            |          |          find_or_find_insert_index_inner (inlined)
+            |          |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |          |--0.79%--folded_multiply (inlined)
+            |          |          finish (inlined)
+            |          |          hash_one<foldhash::fast::FixedState, &i64> (inlined)
+            |          |          make_hash<i64, foldhash::fast::FixedState> (inlined)
+            |          |          insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          |          
+            |           --0.59%--_mm_loadu_si128 (inlined)
+            |                     load (inlined)
+            |                     find_or_find_insert_index_inner (inlined)
+            |                     find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |                     insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          
+            |--3.76%--record_item_insert_at (inlined)
+            |          insert_tagged_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          insert_at_index<(i64, ()), alloc::alloc::Global> (inlined)
+            |          |          
+            |           --3.33%--insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |                     |          
+            |                      --1.71%--0x3
+            |          
+            |--1.38%--full (inlined)
+            |          find_or_find_insert_index_inner (inlined)
+            |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          _RNvMs1_NtCs3BTM885nGDo_9hashbrown3mapINtB5_7HashMapxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE6insertCsgLKfj5YsOth_30datafusion_functions_aggregate
+            |          
+            |--1.26%--_mm_movemask_epi8 (inlined)
+            |          match_tag (inlined)
+            |          find_or_find_insert_index_inner (inlined)
+            |          find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          
+            |           --1.21%--insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+            |          
+             --1.13%--find_insert_index_in_group (inlined)
+                       find_or_find_insert_index_inner (inlined)
+                       find_or_find_insert_index<(i64, ()), alloc::alloc::Global, hashbrown::map::equivalent_key::{closure_env#0}<i64, i64, ()>, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+                       insert<i64, (), foldhash::fast::FixedState, alloc::alloc::Global> (inlined)
+
+    44.18%  infralab-distinct-probe  [.] _RINvMs6_NtCs3BTM885nGDo_9hashbrown3rawINtB6_8RawTableTxuEE14reserve_rehashNCINvNtB8_3map11make_hasherxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE0ECsgLKfj5YsOth_30datafusion_functions_aggregate                                                                                                                                                                                                                                                                                                                                                                                   -      -            
+            |          
+            |--38.89%--_RINvMs6_NtCs3BTM885nGDo_9hashbrown3rawINtB6_8RawTableTxuEE14reserve_rehashNCINvNtB8_3map11make_hasherxuNtNtCslEZHUJFkgNo_8foldhash4fast10FixedStateE0ECsgLKfj5YsOth_30datafusion_functions_aggregate
+            |          |          
+            |          |--14.74%--fix_insert_index (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --7.85%--0xffff
+            |          |          
+            |          |--6.99%--find_insert_index_in_group (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --5.06%--0xffff
+            |          |          
+            |          |--5.44%--resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --1.91%--0xffff
+            |          |          
+            |          |--4.12%--match_empty_or_deleted (inlined)
+            |          |          find_insert_index_in_group (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --3.20%--0xffff
+            |          |          
+            |          |--2.10%--is_bucket_full (inlined)
+            |          |          fix_insert_index (inlined)
+            |          |          find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --1.13%--0xffff
+            |          |          
+            |          |--1.86%--next (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          |          
+            |          |           --0.69%--0xffff
+            |          |          
+            |          |--1.81%--find_insert_index (inlined)
+            |          |          prepare_insert_index (inlined)
+            |          |          resize_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          
+            |           --0.80%--finish (inlined)
+            |                     hash_one<foldhash::fast::FixedState, &i64> (inlined)
+            |                     make_hash<i64, foldhash::fast::FixedState> (inlined)
+            |                     {closure#0}<i64, (), foldhash::fast::FixedState> (inlined)
+            |                     {closure#0}<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |                     resize_inner<alloc::alloc::Global> (inlined)
+            |                     reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |                     reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          
+            |--3.38%--find_insert_index_in_group (inlined)
+            |          find_insert_index (inlined)
+            |          prepare_insert_index (inlined)
+            |          resize_inner<alloc::alloc::Global> (inlined)
+            |          reserve_rehash_inner<alloc::alloc::Global> (inlined)
+            |          reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+            |          |          
+            |           --1.78%--0xffff
+            |          
+             --1.38%--lowest_set_bit (inlined)
+                       find_insert_index_in_group (inlined)
+                       find_insert_index (inlined)
+                       prepare_insert_index (inlined)
+                       resize_inner<alloc::alloc::Global> (inlined)
+                       reserve_rehash_inner<alloc::alloc::Global> (inlined)
+                       reserve_rehash<(i64, ()), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<i64, (), foldhash::fast::FixedState>> (inlined)
+                       |          
+                        --1.12%--0xffff
+
+     4.65%  infralab-distinct-probe  [.] _RNvXNtNtCsgFX3jaOk65H_5alloc3vec14spec_from_iterINtB4_3VecxEINtB2_12SpecFromIterxINtNtNtNtCskADBYZwJmSU_4core4iter8adapters6copied6CopiedINtNtNtNtCs8ZKwes1zzDd_3std11collections4hash3set4IterxEEE9from_iterCsgLKfj5YsOth_30datafusion_functions_aggregate                                                                                                                                                                                                                                                                                                                            -      -            
+            |          
+            |--3.41%--_RNvXNtNtCsgFX3jaOk65H_5alloc3vec14spec_from_iterINtB4_3VecxEINtB2_12SpecFromIterxINtNtNtNtCskADBYZwJmSU_4core4iter8adapters6copied6CopiedINtNtNtNtCs8ZKwes1zzDd_3std11collections4hash3set4IterxEEE9from_iterCsgLKfj5YsOth_30datafusion_functions_aggregate
+            |          |          
+            |          |--1.66%--spec_extend<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>, alloc::alloc::Global> (inlined)
+            |          |          from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          |          from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          |          
+            |          |--0.79%--extend_desugared<i64, alloc::alloc::Global, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          |          spec_extend<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>, alloc::alloc::Global> (inlined)
+            |          |          from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          |          from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          |          
+            |           --0.54%--next_impl<(i64, ()), false> (inlined)
+            |                     next<(i64, ())> (inlined)
+            |                     next<i64, ()> (inlined)
+            |                     next<i64, ()> (inlined)
+            |                     next<i64> (inlined)
+            |                     next<i64> (inlined)
+            |                     next<std::collections::hash::set::Iter<i64>, i64> (inlined)
+            |                     extend_desugared<i64, alloc::alloc::Global, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |                     spec_extend<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>, alloc::alloc::Global> (inlined)
+            |                     from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |                     from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+            |          
+             --0.97%--extend_desugared<i64, alloc::alloc::Global, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+                       spec_extend<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>, alloc::alloc::Global> (inlined)
+                       from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+                       from_iter<i64, core::iter::adapters::copied::Copied<std::collections::hash::set::Iter<i64>>> (inlined)
+
+     0.75%  infralab-distinct-probe  [.] _RNvXs_NtNtNtCsgWNbAOYD1S8_37datafusion_functions_aggregate_common9aggregate14count_distinct6nativeINtB4_33PrimitiveDistinctCountAccumulatorNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtNtCsvpaNbrPHIN_22datafusion_expr_common11accumulator11Accumulator12update_batchCsgLKfj5YsOth_30datafusion_functions_aggregate                                                                                                                                                                                                                                                             -      -            
+            |          
+             --0.69%--_RNvXs_NtNtNtCsgWNbAOYD1S8_37datafusion_functions_aggregate_common9aggregate14count_distinct6nativeINtB4_33PrimitiveDistinctCountAccumulatorNtNtCs4MhKbW33GQE_11arrow_array5types9Int64TypeENtNtCsvpaNbrPHIN_22datafusion_expr_common11accumulator11Accumulator12update_batchCsgLKfj5YsOth_30datafusion_functions_aggregate
+                       |          
+                        --0.53%--{closure#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>> (inlined)
+                                  {closure#0}<i64, (i64, ()), (), hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>>> (inlined)
+                                  {closure#0}<i64, (), core::iter::adapters::map::map_fold::{closure_env#0}<i64, (i64, ()), (), hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>>>> (inlined)
+                                  fold<i64, (), core::iter::adapters::copied::copy_fold::{closure_env#0}<i64, (), core::iter::adapters::map::map_fold::{closure_env#0}<i64, (i64, ()), (), hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>>>>> (inlined)
+                                  fold<core::slice::iter::Iter<i64>, i64, (), core::iter::adapters::map::map_fold::{closure_env#0}<i64, (i64, ()), (), hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>>>> (inlined)
+                                  fold<(i64, ()), core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>, (), core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i64, ()), hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>>> (inlined)
+                                  for_each<core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>, hashbrown::map::{impl#82}::extend::{closure_env#0}<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>>> (inlined)
+                                  extend<i64, (), foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>, hashbrown::set::{impl#10}::extend::{closure_env#0}<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>>>> (inlined)
+                                  extend<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>> (inlined)
+                                  extend<i64, foldhash::fast::FixedState, alloc::alloc::Global, core::iter::adapters::copied::Copied<core::slice::iter::Iter<i64>>> (inlined)
+                                  update_batch<arrow_array::types::Int64Type> (inlined)
+
+     0.64%  libc.so.6                [.] __memset_avx512_unaligned_erms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          -      -            
+            |
+            ---__memset_avx512_unaligned_erms
+               _RINvMsa_NtCs3BTM885nGDo_9hashbrown3rawNtB6_13RawTableInner22fallible_with_capacityNtNtCsgFX3jaOk65H_5alloc5alloc6GlobalECsgLKfj5YsOth_30datafusion_functions_aggregate.llvm.13664018570937486246
+               write_bytes<core::mem::maybe_uninit::MaybeUninit<hashbrown::control::tag::Tag>> (inlined)
+               fill_tag (inlined)
+               fill_empty<[core::mem::maybe_uninit::MaybeUninit<hashbrown::control::tag::Tag>]> (inlined)
+               fallible_with_capacity<alloc::alloc::Global> (inlined)
+
+
+
+#
+# (Tip: For a higher level overview, try: perf report --sort comm,dso)
+#

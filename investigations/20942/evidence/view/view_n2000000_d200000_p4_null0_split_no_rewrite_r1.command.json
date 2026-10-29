@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/usr/bin/time",
+    "-v",
+    "-o",
+    "investigations/20942/evidence/view/view_n2000000_d200000_p4_null0_split_no_rewrite_r1.time.txt",
+    "taskset",
+    "-c",
+    "0-5",
+    "/tmp/infralab-datafusion/target/release/infralab-distinct-probe",
+    "--rows",
+    "2000000",
+    "--cardinality",
+    "200000",
+    "--partitions",
+    "4",
+    "--kind",
+    "view",
+    "--mode",
+    "split_no_rewrite",
+    "--null-every",
+    "0",
+    "--iterations",
+    "3"
+  ],
+  "started_utc": "2026-10-29T19:20:58Z",
+  "exit_code": 0,
+  "process_wall_s": 1.0259794039884582
+}

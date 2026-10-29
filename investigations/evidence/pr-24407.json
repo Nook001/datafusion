@@ -1,0 +1,214 @@
+{
+  "retrieved_at": "2026-10-29T19:05:31.595Z",
+  "pull_request": {
+    "url": "https://github.com/apache/datafusion/pull/24407",
+    "number": 24407,
+    "state": "closed",
+    "merged": false,
+    "mergeable": true,
+    "draft": false,
+    "body": "## Which issue does this PR close?\n\n- Closes #24230.\n\n## Rationale for this change\n\n`DiskManager` charges `used_disk_space` before writing a spill file so concurrent writers cannot collectively exceed `max_temp_directory_size`. On a quota miss, `FileSpillWriter::write` already rolls that reservation back.\n\nThe OS `write_all` error path did not. The global counter stayed charged, `current_file_disk_usage` was left at the last successful size, and `RefCountedTempFile::Drop` subtracted too little. After one I/O error the leaked bytes stay until process exit, so later spills that fit on disk are rejected.\n\n#21882 already fixed the quota path on `main`. This is the remaining `write_all` error path called out in #24230.\n\n## What changes are included in this PR?\n\n- If the OS write fails after the reservation, subtract the reserved bytes from `used_disk_space` before returning the I/O error.\n- Add a regression test that writes 400 bytes into a 1000-byte cap, then forces two 600-byte writes through a read-only handle. Without the rollback the first leak fills the cap (so the second attempt is a quota error, and a later 500-byte spill is rejected). With the fix the counter stays at 400, the 500-byte write succeeds, and dropping the file returns the counter to 0.\n\n## Are these changes tested?\n\nYes.\n\n- New `test_write_io_error_rolls_back_disk_usage` in `datafusion/execution/src/disk_manager.rs`.\n- Existing `test_rollback_on_limit_exceeded_then_drop_returns_to_zero` still covers the quota path.\n\nRan:\n\n- `cargo test -p datafusion-execution --lib disk_manager`\n- `cargo clippy -p datafusion-execution --lib --all-targets -- -D warnings`\n\n## Are there any user-facing changes?\n\nA failed spill write no longer permanently reduces remaining spill capacity. There is no API change.",
+    "title": "fix: roll back DiskManager usage when spill write I/O fails",
+    "base": "main",
+    "base_sha": "e7e037dbeb6e578f13a6ba16d528366e888c253a",
+    "head": "fix/disk-manager-write-all-usage-leak",
+    "head_sha": "2365e2f2fed9907ff36cbed9f85c60086a8bb687",
+    "head_repo_id": 1335360087,
+    "head_repo_full_name": "shinzoxD/datafusion",
+    "merge_commit_sha": "f0adb8b49ff15ac7f01b9c8dbe12b5a39bc632e3",
+    "user": {
+      "login": "shinzoxD",
+      "name": "shinzoxD",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+      "id": 129059557
+    },
+    "requested_reviewers": null,
+    "requested_team_reviewers": null,
+    "diff": "@@ -502,7 +502,17 @@ impl std::io::Write for FileSpillWriter {\n             )));\n         }\n \n-        self.file.write_all(buf).map_err(DataFusionError::IoError)?;\n+        // Charge the global counter before the OS write so concurrent writers\n+        // cannot collectively exceed the quota. If the write fails, roll that\n+        // reservation back: `current_file_disk_usage` is only updated on\n+        // success, so `Drop` would otherwise subtract too little and the\n+        // leaked bytes would permanently shrink spill capacity (#24230).\n+        if let Err(e) = self.file.write_all(buf) {\n+            self.disk_manager\n+                .used_disk_space\n+                .fetch_sub(len, Ordering::Relaxed);\n+            return Err(e);\n+        }\n \n         self.current_file_disk_usage\n             .fetch_add(len, Ordering::Relaxed);\n@@ -1175,4 +1185,59 @@ mod tests {\n \n         Ok(())\n     }\n+\n+    #[test]\n+    fn test_write_io_error_rolls_back_disk_usage() -> Result<()> {\n+        // FileSpillWriter::write reserves `len` on the global counter before\n+        // the OS write. If that write fails, the reservation must be released.\n+        // Otherwise Drop only subtracts the last successful size and the\n+        // leaked bytes shrink future spill capacity (issue #24230).\n+        let cap = 1000u64;\n+        let dm = Arc::new(\n+            DiskManagerBuilder::default()\n+                .with_max_temp_directory_size(cap)\n+                .build()?,\n+        );\n+\n+        let file = dm.create_tmp_file(\"write_io_error\")?;\n+        {\n+            let mut writer = file.open_writer()?;\n+            writer.write_all(&[0u8; 400])?;\n+        }\n+        assert_eq!(dm.used_disk_space(), 400);\n+\n+        // Read-only handle: the quota reservation succeeds (400 + 600 == cap)\n+        // but the OS write fails. Use a dummy per-file counter so this writer\n+        // cannot accidentally \"fix\" Drop accounting on the real file.\n+        let mut failing = FileSpillWriter {\n+            file: std::fs::File::open(file.path().unwrap())?,\n+            disk_manager: Arc::clone(&dm),\n+            current_file_disk_usage: Arc::new(AtomicU64::new(0)),\n+        };\n+\n+        for _ in 0..2 {\n+            let err = std::io::Write::write_all(&mut failing, &[1u8; 600]).unwrap_err();\n+            // Without the rollback, the first leak fills the cap and the\n+            // second attempt fails the quota check instead of the OS write.\n+            assert!(\n+                !err.to_string().contains(\"exceeded the allowable limit\"),\n+                \"expected an OS write error, not a quota error: {err}\"\n+            );\n+            assert_eq!(dm.used_disk_space(), 400);\n+        }\n+        drop(failing);\n+\n+        // 500 bytes still fits (used 400, cap 1000). A leaked 600-byte\n+        // reservation would make this fail the quota check.\n+        {\n+            let mut writer = file.open_writer()?;\n+            writer.write_all(&[2u8; 500])?;\n+        }\n+        assert_eq!(dm.used_disk_space(), 900);\n+\n+        drop(file);\n+        assert_eq!(dm.used_disk_space(), 0);\n+\n+        Ok(())\n+    }\n }",
+    "comments": [
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407#pullrequestreview-4945033884",
+        "body": "Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.",
+        "user": {
+          "login": "copilot-pull-request-reviewer[bot]",
+          "name": "copilot-pull-request-reviewer[bot]",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/in/946600?v=4",
+          "id": 175728472
+        },
+        "id": 4945033884,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-08-16T00:30:31Z",
+        "updated_at": null,
+        "review": "COMMENTED",
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5350186733",
+        "body": "@shinzoxD im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken",
+        "user": {
+          "login": "Jefffrey",
+          "name": "Jefffrey",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/22608443?v=4",
+          "id": 22608443
+        },
+        "id": 5350186733,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-08-20T01:46:40Z",
+        "updated_at": "2026-08-20T01:46:40Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/shinzoxD/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/shinzoxD\">@shinzoxD</a> im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken</p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5350390238",
+        "body": "> @shinzoxD im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken\r\n\r\nFor why it won't work: in order to get those PRs merged, reviewers have to prompt the AI through a human proxy, that's less efficient than directly prompting AI themselves.\r\n\r\nhttps://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions",
+        "user": {
+          "login": "2010YOUY01",
+          "name": "2010YOUY01",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/23360377?v=4",
+          "id": 23360377
+        },
+        "id": 5350390238,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-08-20T02:18:08Z",
+        "updated_at": "2026-08-20T02:18:08Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<blockquote>\n<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/shinzoxD/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/shinzoxD\">@shinzoxD</a> im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken</p>\n</blockquote>\n<p dir=\"auto\">For why it won't work: in order to get those PRs merged, reviewers have to prompt the AI through a human proxy, that's less efficient than directly prompting AI themselves.</p>\n<p dir=\"auto\"><a href=\"https://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions\" rel=\"nofollow\">https://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions</a></p>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5396835305",
+        "body": "@Jefffrey @2010YOUY01 thank you for calling this out. You are right, and I am sorry for the noise.\n\nI did not check thoroughly enough for existing PRs or for people who had already volunteered. That was a failure of due diligence, including against the [AI-assisted contributions](https://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions) guidance.\n\nDuplicates I am closing now:\n\n- #24498 (already closed by @neilconway in favor of #24455)\n- #24499 (already closed in favor of #24433)\n- #24495 and #24496 — overlap #24481, which already closes #24468 and #24470\n- this PR (#24407) — @Himanshu-2005-code volunteered on #24230 on 10 Aug, a week before I opened this, and I did not ask whether they were still working on it\n\nI will not open further DataFusion PRs until the remaining unique ones have had a chance to be reviewed, and I will not open a PR on an issue that already has a volunteer or an open PR.\n\nUnique PRs I am leaving open (happy to close any of these too if you would rather):\n\n- #24399 log(0) domain error\n- #24400 `default_null_ordering` validation\n- #24402 CASE WHEN divide-by-zero specialization\n- #24403 extended tests path\n- #24406 lambda param rebase\n- #24494 Spark hex Utf8View",
+        "user": {
+          "login": "shinzoxD",
+          "name": "shinzoxD",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+          "id": 129059557
+        },
+        "id": 5396835305,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-08-24T14:42:02Z",
+        "updated_at": "2026-08-24T14:42:02Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\"><a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Jefffrey/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Jefffrey\">@Jefffrey</a> <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/2010YOUY01/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/2010YOUY01\">@2010YOUY01</a> thank you for calling this out. You are right, and I am sorry for the noise.</p>\n<p dir=\"auto\">I did not check thoroughly enough for existing PRs or for people who had already volunteered. That was a failure of due diligence, including against the <a href=\"https://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions\" rel=\"nofollow\">AI-assisted contributions</a> guidance.</p>\n<p dir=\"auto\">Duplicates I am closing now:</p>\n<ul dir=\"auto\">\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5196306635\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24498\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24498/hovercard\" href=\"https://github.com/apache/datafusion/pull/24498\">#24498</a> (already closed by <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/neilconway/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/neilconway\">@neilconway</a> in favor of <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5181117921\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24455\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24455/hovercard\" href=\"https://github.com/apache/datafusion/pull/24455\">#24455</a>)</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5196322620\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24499\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24499/hovercard\" href=\"https://github.com/apache/datafusion/pull/24499\">#24499</a> (already closed in favor of <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5173730683\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24433\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24433/hovercard\" href=\"https://github.com/apache/datafusion/pull/24433\">#24433</a>)</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5195457843\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24495\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24495/hovercard\" href=\"https://github.com/apache/datafusion/pull/24495\">#24495</a> and <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5195654243\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24496\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24496/hovercard\" href=\"https://github.com/apache/datafusion/pull/24496\">#24496</a> — overlap <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5189464577\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24481\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24481/hovercard\" href=\"https://github.com/apache/datafusion/pull/24481\">#24481</a>, which already closes <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5186145579\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24468\" data-hovercard-type=\"issue\" data-hovercard-url=\"/apache/datafusion/issues/24468/hovercard\" href=\"https://github.com/apache/datafusion/issues/24468\">#24468</a> and <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5186202269\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24470\" data-hovercard-type=\"issue\" data-hovercard-url=\"/apache/datafusion/issues/24470/hovercard\" href=\"https://github.com/apache/datafusion/issues/24470\">#24470</a></li>\n<li>this PR (<a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161986315\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24407\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24407/hovercard\" href=\"https://github.com/apache/datafusion/pull/24407\">#24407</a>) — <a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Himanshu-2005-code/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Himanshu-2005-code\">@Himanshu-2005-code</a> volunteered on <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5112409658\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24230\" data-hovercard-type=\"issue\" data-hovercard-url=\"/apache/datafusion/issues/24230/hovercard\" href=\"https://github.com/apache/datafusion/issues/24230\">#24230</a> on 10 Aug, a week before I opened this, and I did not ask whether they were still working on it</li>\n</ul>\n<p dir=\"auto\">I will not open further DataFusion PRs until the remaining unique ones have had a chance to be reviewed, and I will not open a PR on an issue that already has a volunteer or an open PR.</p>\n<p dir=\"auto\">Unique PRs I am leaving open (happy to close any of these too if you would rather):</p>\n<ul dir=\"auto\">\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161171807\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24399\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24399/hovercard\" href=\"https://github.com/apache/datafusion/pull/24399\">#24399</a> log(0) domain error</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161433909\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24400\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24400/hovercard\" href=\"https://github.com/apache/datafusion/pull/24400\">#24400</a> <code class=\"notranslate\">default_null_ordering</code> validation</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161746481\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24402\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24402/hovercard\" href=\"https://github.com/apache/datafusion/pull/24402\">#24402</a> CASE WHEN divide-by-zero specialization</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161752138\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24403\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24403/hovercard\" href=\"https://github.com/apache/datafusion/pull/24403\">#24403</a> extended tests path</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5161937207\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24406\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24406/hovercard\" href=\"https://github.com/apache/datafusion/pull/24406\">#24406</a> lambda param rebase</li>\n<li><a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5195326560\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24494\" data-hovercard-type=\"pull_request\" data-hovercard-url=\"/apache/datafusion/pull/24494/hovercard\" href=\"https://github.com/apache/datafusion/pull/24494\">#24494</a> Spark hex Utf8View</li>\n</ul>"
+      },
+      {
+        "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5396835614",
+        "body": "Closing in favor of the existing volunteer on #24230 (@Himanshu-2005-code). Sorry for jumping the queue.",
+        "user": {
+          "login": "shinzoxD",
+          "name": "shinzoxD",
+          "email": null,
+          "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+          "id": 129059557
+        },
+        "id": 5396835614,
+        "pull_request_review_id": null,
+        "in_reply_to_id": null,
+        "created_at": "2026-08-24T14:42:04Z",
+        "updated_at": "2026-08-24T14:42:04Z",
+        "review": null,
+        "side": null,
+        "line": null,
+        "start_line": null,
+        "path": null,
+        "body_html": "<p dir=\"auto\">Closing in favor of the existing volunteer on <a class=\"issue-link js-issue-link\" data-error-text=\"Failed to load title\" data-id=\"5112409658\" data-permission-text=\"Title is private\" data-url=\"https://github.com/apache/datafusion/issues/24230\" data-hovercard-type=\"issue\" data-hovercard-url=\"/apache/datafusion/issues/24230/hovercard\" href=\"https://github.com/apache/datafusion/issues/24230\">#24230</a> (<a class=\"user-mention notranslate\" data-hovercard-type=\"user\" data-hovercard-url=\"/users/Himanshu-2005-code/hovercard\" data-octo-click=\"hovercard-link-click\" data-octo-dimensions=\"link_type:self\" href=\"https://github.com/Himanshu-2005-code\">@Himanshu-2005-code</a>). Sorry for jumping the queue.</p>"
+      }
+    ],
+    "created_at": "2026-08-16T00:30:25Z",
+    "updated_at": "2026-08-24T14:42:05Z",
+    "closed_at": "2026-08-24T14:42:05Z",
+    "merged_at": null,
+    "commits": 1,
+    "changed_files": 1,
+    "additions": 66,
+    "deletions": 1,
+    "display_url": "https://github.com/apache/datafusion/pull/24407",
+    "display_title": "fix: roll back DiskManager usage when spill write I/O fails"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/pull/24407#pullrequestreview-4945033884",
+      "body": "Copilot was unable to review this pull request because the user who requested the review has reached their quota limit.",
+      "user": {
+        "login": "copilot-pull-request-reviewer[bot]",
+        "name": "copilot-pull-request-reviewer[bot]",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/in/946600?v=4",
+        "id": 175728472
+      },
+      "created_at": "2026-08-16T00:30:31Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5350186733",
+      "body": "@shinzoxD im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken",
+      "user": {
+        "login": "Jefffrey",
+        "name": "Jefffrey",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/22608443?v=4",
+        "id": 22608443
+      },
+      "created_at": "2026-08-20T01:46:40Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5350390238",
+      "body": "> @shinzoxD im seeing some concerning behaviour; you have 11 open PRs at the moment, and by my count 4 of them are duplicates. and for the issue linked in this PR, someone volunteered to take a look at the issue only 1 week ago yet this PR was submitted without communication if they still had an interest in the PR. frankly this is looking like spam to us since proper due diligence doesnt seem to have been undertaken\r\n\r\nFor why it won't work: in order to get those PRs merged, reviewers have to prompt the AI through a human proxy, that's less efficient than directly prompting AI themselves.\r\n\r\nhttps://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions",
+      "user": {
+        "login": "2010YOUY01",
+        "name": "2010YOUY01",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/23360377?v=4",
+        "id": 23360377
+      },
+      "created_at": "2026-08-20T02:18:08Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5396835305",
+      "body": "@Jefffrey @2010YOUY01 thank you for calling this out. You are right, and I am sorry for the noise.\n\nI did not check thoroughly enough for existing PRs or for people who had already volunteered. That was a failure of due diligence, including against the [AI-assisted contributions](https://datafusion.apache.org/contributor-guide/index.html#ai-assisted-contributions) guidance.\n\nDuplicates I am closing now:\n\n- #24498 (already closed by @neilconway in favor of #24455)\n- #24499 (already closed in favor of #24433)\n- #24495 and #24496 — overlap #24481, which already closes #24468 and #24470\n- this PR (#24407) — @Himanshu-2005-code volunteered on #24230 on 10 Aug, a week before I opened this, and I did not ask whether they were still working on it\n\nI will not open further DataFusion PRs until the remaining unique ones have had a chance to be reviewed, and I will not open a PR on an issue that already has a volunteer or an open PR.\n\nUnique PRs I am leaving open (happy to close any of these too if you would rather):\n\n- #24399 log(0) domain error\n- #24400 `default_null_ordering` validation\n- #24402 CASE WHEN divide-by-zero specialization\n- #24403 extended tests path\n- #24406 lambda param rebase\n- #24494 Spark hex Utf8View",
+      "user": {
+        "login": "shinzoxD",
+        "name": "shinzoxD",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+        "id": 129059557
+      },
+      "created_at": "2026-08-24T14:42:02Z"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/pull/24407#issuecomment-5396835614",
+      "body": "Closing in favor of the existing volunteer on #24230 (@Himanshu-2005-code). Sorry for jumping the queue.",
+      "user": {
+        "login": "shinzoxD",
+        "name": "shinzoxD",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/129059557?v=4",
+        "id": 129059557
+      },
+      "created_at": "2026-08-24T14:42:04Z"
+    }
+  ]
+}

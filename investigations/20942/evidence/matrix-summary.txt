@@ -1,0 +1,48 @@
+i64  d=  20000 p=4 null= 1 native          :     0.16 ms [0.15, 0.16], pool 0.00 MiB, merge 0.00 ms
+i64  d=  20000 p=4 null= 1 split           :     0.37 ms [0.31, 0.44], pool 0.44 MiB, merge 0.00 ms
+i64  d=  20000 p=4 null= 1 split_no_rewrite:     0.18 ms [0.17, 0.18], pool 0.00 MiB, merge 0.00 ms
+i64  d=  20000 p=4 null=17 native          :     2.76 ms [2.74, 3.22], pool 3.38 MiB, merge 1.26 ms
+i64  d=  20000 p=4 null=17 split           :     2.14 ms [1.78, 2.36], pool 5.35 MiB, merge 0.00 ms
+i64  d=  20000 p=4 null=17 split_no_rewrite:     2.34 ms [2.26, 2.37], pool 1.69 MiB, merge 1.26 ms
+i64  d=    128 p=1 null= 0 native          :    14.22 ms [14.19, 14.27], pool 0.01 MiB, merge 0.00 ms
+i64  d=    128 p=1 null= 0 split           :    20.31 ms [20.30, 20.34], pool 0.08 MiB, merge 0.00 ms
+i64  d=    128 p=1 null= 0 split_no_rewrite:    14.39 ms [14.32, 14.46], pool 0.00 MiB, merge 0.00 ms
+i64  d=    128 p=4 null= 0 native          :     3.64 ms [3.60, 3.75], pool 0.03 MiB, merge 0.01 ms
+i64  d=    128 p=4 null= 0 split           :     3.70 ms [3.58, 4.11], pool 0.55 MiB, merge 0.00 ms
+i64  d=    128 p=4 null= 0 split_no_rewrite:     2.53 ms [2.50, 2.66], pool 0.01 MiB, merge 0.01 ms
+i64  d= 200000 p=1 null= 0 native          :    38.12 ms [37.49, 38.99], pool 6.75 MiB, merge 0.00 ms
+i64  d= 200000 p=1 null= 0 split           :    46.13 ms [44.81, 48.31], pool 7.09 MiB, merge 0.00 ms
+i64  d= 200000 p=1 null= 0 split_no_rewrite:    33.39 ms [33.10, 33.82], pool 2.25 MiB, merge 0.00 ms
+i64  d= 200000 p=4 null= 0 native          :    29.80 ms [29.14, 30.27], pool 27.00 MiB, merge 13.37 ms
+i64  d= 200000 p=4 null= 0 split           :    16.04 ms [15.93, 17.37], pool 30.36 MiB, merge 0.00 ms
+i64  d= 200000 p=4 null= 0 split_no_rewrite:    23.49 ms [22.15, 24.10], pool 13.50 MiB, merge 13.47 ms
+i64  d=2000000 p=1 null= 0 native          :   173.63 ms [172.69, 175.20], pool 108.00 MiB, merge 0.00 ms
+i64  d=2000000 p=1 null= 0 split           :   200.32 ms [199.74, 201.77], pool 91.70 MiB, merge 0.00 ms
+i64  d=2000000 p=1 null= 0 split_no_rewrite:   154.10 ms [153.53, 154.89], pool 36.00 MiB, merge 0.00 ms
+i64  d=2000000 p=4 null= 0 native          :   163.50 ms [162.89, 165.35], pool 108.00 MiB, merge 119.30 ms
+i64  d=2000000 p=4 null= 0 split           :    50.28 ms [48.97, 51.71], pool 232.63 MiB, merge 0.00 ms
+i64  d=2000000 p=4 null= 0 split_no_rewrite:   139.73 ms [133.36, 143.64], pool 54.42 MiB, merge 119.68 ms
+utf8 d=    128 p=1 null= 0 native          :    53.67 ms [53.63, 54.38], pool 0.23 MiB, merge 0.00 ms
+utf8 d=    128 p=1 null= 0 split           :    61.20 ms [60.83, 61.58], pool 0.17 MiB, merge 0.00 ms
+utf8 d=    128 p=1 null= 0 split_no_rewrite:    54.05 ms [53.46, 55.83], pool 0.08 MiB, merge 0.00 ms
+utf8 d=    128 p=4 null= 0 native          :    13.78 ms [13.57, 14.19], pool 0.93 MiB, merge 0.05 ms
+utf8 d=    128 p=4 null= 0 split           :    10.60 ms [10.54, 10.72], pool 1.14 MiB, merge 0.00 ms
+utf8 d=    128 p=4 null= 0 split_no_rewrite:     9.33 ms [9.28, 9.46], pool 0.48 MiB, merge 0.04 ms
+utf8 d= 200000 p=1 null= 0 native          :   174.21 ms [169.20, 178.25], pool 45.94 MiB, merge 0.00 ms
+utf8 d= 200000 p=1 null= 0 split           :   110.56 ms [109.24, 110.97], pool 18.17 MiB, merge 0.00 ms
+utf8 d= 200000 p=1 null= 0 split_no_rewrite:    94.69 ms [94.02, 94.96], pool 15.31 MiB, merge 0.00 ms
+utf8 d= 200000 p=2 null= 0 native          :   151.01 ms [150.40, 154.69], pool 91.88 MiB, merge 38.60 ms
+utf8 d= 200000 p=2 null= 0 split           :    61.26 ms [60.03, 64.80], pool 63.98 MiB, merge 0.00 ms
+utf8 d= 200000 p=2 null= 0 split_no_rewrite:    71.24 ms [70.54, 72.47], pool 91.88 MiB, merge 32.85 ms
+utf8 d= 200000 p=4 null= 0 native          :   142.48 ms [140.63, 155.14], pool 183.75 MiB, merge 75.64 ms
+utf8 d= 200000 p=4 null= 0 split           :    63.32 ms [62.14, 64.52], pool 99.66 MiB, merge 0.00 ms
+utf8 d= 200000 p=4 null= 0 split_no_rewrite:    91.27 ms [89.67, 98.83], pool 108.65 MiB, merge 57.70 ms
+utf8 d= 200000 p=6 null= 0 native          :   164.02 ms [162.28, 170.97], pool 275.63 MiB, merge 108.59 ms
+utf8 d= 200000 p=6 null= 0 split           :    71.61 ms [68.97, 72.02], pool 140.68 MiB, merge 0.00 ms
+utf8 d= 200000 p=6 null= 0 split_no_rewrite:   111.31 ms [109.56, 112.16], pool 108.65 MiB, merge 80.46 ms
+utf8 d=2000000 p=1 null= 0 native          :   427.69 ms [393.82, 435.04], pool 708.19 MiB, merge 0.00 ms
+utf8 d=2000000 p=1 null= 0 split           :   429.71 ms [415.25, 435.20], pool 275.79 MiB, merge 0.00 ms
+utf8 d=2000000 p=1 null= 0 split_no_rewrite:   366.96 ms [360.75, 373.85], pool 236.06 MiB, merge 0.00 ms
+utf8 d=2000000 p=4 null= 0 native          :   513.13 ms [501.94, 515.13], pool 719.44 MiB, merge 399.82 ms
+utf8 d=2000000 p=4 null= 0 split           :   133.34 ms [131.32, 136.56], pool 699.32 MiB, merge 0.00 ms
+utf8 d=2000000 p=4 null= 0 split_no_rewrite:   461.92 ms [455.69, 473.24], pool 354.38 MiB, merge 419.43 ms

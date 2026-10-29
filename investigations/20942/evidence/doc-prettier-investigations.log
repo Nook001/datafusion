@@ -1,0 +1,4 @@
+npm notice run npx
+npm notice run 'prettier' --write investigations/ISSUE_SELECTION.md investigations/20942/REPORT.md
+investigations/ISSUE_SELECTION.md 69ms
+investigations/20942/REPORT.md 60ms

@@ -1,0 +1,22 @@
+{
+  "command": [
+    "taskset",
+    "-c",
+    "0-5",
+    "/tmp/infralab-datafusion/target/release/infralab-distinct-probe",
+    "--rows",
+    "2000000",
+    "--cardinality",
+    "2000000",
+    "--columns",
+    "3",
+    "--partitions",
+    "4",
+    "--kind",
+    "i64",
+    "--mode",
+    "same_argument",
+    "--iterations",
+    "5"
+  ]
+}

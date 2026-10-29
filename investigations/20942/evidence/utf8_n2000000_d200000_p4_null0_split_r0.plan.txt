@@ -1,0 +1,46 @@
+Cross Join:
+  Cross Join:
+    SubqueryAlias: q0
+      Projection: count(alias1) AS c0
+        Aggregate: groupBy=[[]], aggr=[[count(alias1)]]
+          Aggregate: groupBy=[[t.a0 AS alias1]], aggr=[[]]
+            TableScan: t projection=[a0]
+    SubqueryAlias: q1
+      Projection: count(alias1) AS c1
+        Aggregate: groupBy=[[]], aggr=[[count(alias1)]]
+          Aggregate: groupBy=[[t.a1 AS alias1]], aggr=[[]]
+            TableScan: t projection=[a1]
+  SubqueryAlias: q2
+    Projection: count(alias1) AS c2
+      Aggregate: groupBy=[[]], aggr=[[count(alias1)]]
+        Aggregate: groupBy=[[t.a2 AS alias1]], aggr=[[]]
+          TableScan: t projection=[a2]
+
+ProjectionExec: expr=[c0@1 as c0, c1@2 as c1, c2@0 as c2], metrics=[output_rows=1, elapsed_compute=1.01µs, output_bytes=24.0 B, output_batches=1, expr_0_eval_time=140ns, expr_1_eval_time=140ns, expr_2_eval_time=40ns]
+  CrossJoinExec, metrics=[output_rows=1, elapsed_compute=2.12µs, output_bytes=24.0 B, output_batches=1, build_mem_used=104.0 B, build_input_batches=1, build_input_rows=1, input_batches=1, input_rows=1, build_time=1.61µs, join_time=510ns, avg_fanout=N/A (0/0), probe_hit_rate=N/A (0/0)]
+    ProjectionExec: expr=[count(alias1)@0 as c2], metrics=[output_rows=1, elapsed_compute=1.93µs, output_bytes=8.0 B, output_batches=1, expr_0_eval_time=210ns]
+      AggregateExec: mode=Final, gby=[], aggr=[count(alias1)], metrics=[output_rows=1, elapsed_compute=4.25µs, output_bytes=8.0 B, output_batches=1, agg_expr_0_arguments_time=1.30µs, agg_expr_0_evaluate_time=70ns, agg_expr_0_merge_time=1.15µs, output_rows_skew=0%]
+        CoalescePartitionsExec, metrics=[output_rows=4, elapsed_compute=1.22µs, output_bytes=32.0 B, output_batches=4]
+          AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)], metrics=[output_rows=4, elapsed_compute=20.92µs, output_bytes=32.0 B, output_batches=4, agg_expr_0_arguments_time=5.78µs, agg_expr_0_state_time=400ns, agg_expr_0_update_time=2.60µs, output_rows_skew=0%]
+            AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[], metrics=[output_rows=200.0 K, elapsed_compute=74.68ms, output_bytes=63.0 MB, output_batches=28, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, aggregate_arguments_time=12.31µs, aggregation_time=7.06µs, emitting_time=6.72µs, time_calculating_group_ids=74.54ms, output_rows_skew=0%]
+              RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=4, metrics=[output_rows=2.00 M, elapsed_compute=65.88µs, output_bytes=76.3 MB, output_batches=247, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, fetch_time=24.78ms, repartition_time=20.86ms, send_time=13.44ms, output_rows_skew=0%]
+                AggregateExec: mode=Partial, gby=[a2@0 as alias1], aggr=[], metrics=[output_rows=2.00 M, elapsed_compute=24.46ms, output_bytes=336.1 MB, output_batches=248, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, early_emit_count=0, skipped_aggregation_rows=1.57 M, aggregate_arguments_time=3.32µs, aggregation_time=1.49µs, emitting_time=5.95µs, time_calculating_group_ids=24.35ms, output_rows_skew=0%, reduction_factor=100% (426.0 K/426.0 K)]
+                  DataSourceExec: partitions=4, partition_sizes=[62, 62, 62, 62], metrics=[]
+    CrossJoinExec, metrics=[output_rows=1, elapsed_compute=4.20µs, output_bytes=16.0 B, output_batches=1, build_mem_used=104.0 B, build_input_batches=1, build_input_rows=1, input_batches=1, input_rows=1, build_time=1.58µs, join_time=2.62µs, avg_fanout=N/A (0/0), probe_hit_rate=N/A (0/0)]
+      ProjectionExec: expr=[count(alias1)@0 as c0], metrics=[output_rows=1, elapsed_compute=1.30µs, output_bytes=8.0 B, output_batches=1, expr_0_eval_time=120ns]
+        AggregateExec: mode=Final, gby=[], aggr=[count(alias1)], metrics=[output_rows=1, elapsed_compute=3.77µs, output_bytes=8.0 B, output_batches=1, agg_expr_0_arguments_time=1.06µs, agg_expr_0_evaluate_time=60ns, agg_expr_0_merge_time=880ns, output_rows_skew=0%]
+          CoalescePartitionsExec, metrics=[output_rows=4, elapsed_compute=1.33µs, output_bytes=32.0 B, output_batches=4]
+            AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)], metrics=[output_rows=4, elapsed_compute=15.04µs, output_bytes=32.0 B, output_batches=4, agg_expr_0_arguments_time=4.70µs, agg_expr_0_state_time=420ns, agg_expr_0_update_time=1.70µs, output_rows_skew=0%]
+              AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[], metrics=[output_rows=200.0 K, elapsed_compute=73.44ms, output_bytes=63.0 MB, output_batches=28, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, aggregate_arguments_time=12.66µs, aggregation_time=6.82µs, emitting_time=5.45µs, time_calculating_group_ids=73.29ms, output_rows_skew=0.01%]
+                RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=4, metrics=[output_rows=2.00 M, elapsed_compute=64.03µs, output_bytes=76.3 MB, output_batches=247, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, fetch_time=25.61ms, repartition_time=20.60ms, send_time=14.30ms, output_rows_skew=0.01%]
+                  AggregateExec: mode=Partial, gby=[a0@0 as alias1], aggr=[], metrics=[output_rows=2.00 M, elapsed_compute=25.30ms, output_bytes=336.1 MB, output_batches=248, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, early_emit_count=0, skipped_aggregation_rows=1.57 M, aggregate_arguments_time=2.64µs, aggregation_time=1.38µs, emitting_time=6.41µs, time_calculating_group_ids=25.20ms, output_rows_skew=0%, reduction_factor=100% (426.0 K/426.0 K)]
+                    DataSourceExec: partitions=4, partition_sizes=[62, 62, 62, 62], metrics=[]
+      ProjectionExec: expr=[count(alias1)@0 as c1], metrics=[output_rows=1, elapsed_compute=440ns, output_bytes=8.0 B, output_batches=1, expr_0_eval_time=40ns]
+        AggregateExec: mode=Final, gby=[], aggr=[count(alias1)], metrics=[output_rows=1, elapsed_compute=2.08µs, output_bytes=8.0 B, output_batches=1, agg_expr_0_arguments_time=570ns, agg_expr_0_evaluate_time=30ns, agg_expr_0_merge_time=170ns, output_rows_skew=0%]
+          CoalescePartitionsExec, metrics=[output_rows=4, elapsed_compute=7.95µs, output_bytes=32.0 B, output_batches=4]
+            AggregateExec: mode=Partial, gby=[], aggr=[count(alias1)], metrics=[output_rows=4, elapsed_compute=17.11µs, output_bytes=32.0 B, output_batches=4, agg_expr_0_arguments_time=4.77µs, agg_expr_0_state_time=360ns, agg_expr_0_update_time=1.85µs, output_rows_skew=0%]
+              AggregateExec: mode=FinalPartitioned, gby=[alias1@0 as alias1], aggr=[], metrics=[output_rows=200.0 K, elapsed_compute=75.63ms, output_bytes=63.0 MB, output_batches=28, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, aggregate_arguments_time=12.49µs, aggregation_time=7.10µs, emitting_time=6.04µs, time_calculating_group_ids=75.49ms, output_rows_skew=0%]
+                RepartitionExec: partitioning=Hash([alias1@0], 4), input_partitions=4, metrics=[output_rows=2.00 M, elapsed_compute=73.14µs, output_bytes=76.3 MB, output_batches=246, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, fetch_time=24.81ms, repartition_time=20.52ms, send_time=17.11ms, output_rows_skew=0%]
+                  AggregateExec: mode=Partial, gby=[a1@0 as alias1], aggr=[], metrics=[output_rows=2.00 M, elapsed_compute=24.51ms, output_bytes=336.1 MB, output_batches=248, spill_count=0, spilled_bytes=0.0 B, spilled_rows=0, early_emit_count=0, skipped_aggregation_rows=1.57 M, aggregate_arguments_time=3.20µs, aggregation_time=1.45µs, emitting_time=7.23µs, time_calculating_group_ids=24.39ms, output_rows_skew=0%, reduction_factor=100% (426.0 K/426.0 K)]
+                    DataSourceExec: partitions=4, partition_sizes=[62, 62, 62, 62], metrics=[]
+

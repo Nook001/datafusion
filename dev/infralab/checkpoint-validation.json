@@ -1,0 +1,27 @@
+{
+  "checked_at": "2026-10-29T21:10:59.970268+00:00",
+  "base_revision": "14aa185dd23d83d100eff3e3824bffd60df15e41",
+  "fork": "https://github.com/Nook001/datafusion",
+  "branch": "infralab/round-1-investigation",
+  "passed": [
+    "cargo fmt --all",
+    "cargo clippy --all-targets --all-features -- -D warnings",
+    "cargo fmt --manifest-path investigations/20942/repro/Cargo.toml -- --check",
+    "cargo clippy --manifest-path investigations/20942/repro/Cargo.toml --release --all-targets --all-features -- -D warnings",
+    "./ci/scripts/doc_prettier_check.sh --write --allow-dirty",
+    "prettier@2.7.1 investigations/ISSUE_SELECTION.md investigations/20942/REPORT.md",
+    "Python syntax checks and relative report links",
+    "All staged files <= 1572864 bytes"
+  ],
+  "packaging": [
+    "Losslessly compressed profiles/split.jsonl and split-stat.jsonl to .jsonl.gz to meet the repository file-size limit",
+    "Preserved original tool whitespace with attributes scoped to evidence/log directories",
+    "Renamed archived harness-at-run.rs to harness-at-run.rs.txt without changing its bytes",
+    "Added repository-standard SPDX headers to diagnostic source files",
+    "Changed the diagnostic timer import to datafusion::common::instant::Instant, which aliases std::time::Instant on this Linux target",
+    "Regenerated investigations/SHA256SUMS"
+  ],
+  "engine_source_changes": false,
+  "full_rust_lint_suite": "not run; required commit checks above completed",
+  "pull_request_created": false
+}

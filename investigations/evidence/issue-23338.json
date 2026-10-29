@@ -1,0 +1,95 @@
+{
+  "retrieved_at": "2026-10-29T19:04:18.806Z",
+  "issue": {
+    "url": "https://github.com/apache/datafusion/issues/23338",
+    "title": "Perf: Streaming Aggregation should not be chosen unconditionally when the input is sorted",
+    "issue_number": 23338,
+    "body": "## Describe the issue\n\nWhen the input is ordered by the group-by key, DataFusion always selects a streaming (`InputOrderMode::Sorted`) aggregation instead of a hash aggregation, without any cost comparison. \n\nThis is a clear win if `target_partitions = 1`, but regression is observed when `target_partitions > 1`. When the sorted aggregation is chosen, after the `Partial` aggregate, results are hash-repartitioned by the group key, which scatters the key order, so a `SortExec` must be inserted to restore order before the `FinalPartitioned(Sorted)` aggregate. That re-sort grows with cardinality and negates the streaming benefit, while a hash aggregation just does two hash passes with no sort.\n\n## Benchmark\n\nWe benchmarked hash vs sorted aggregation on **identical, already-sorted** input (`SELECT g, sum(v) FROM t GROUP BY g`), sweeping group-key cardinality and parallel degree. Same batches feed both variants; the only difference is whether the source\nadvertises a sort order on the group key (→ sorted/streaming) or not (→ hash).\n\n**Single partition (`target_partitions = 1`)** — sorted is never slower, up to ~2.8x faster at high cardinality:\n\n| cardinality | hash | sorted |\n|---|---|---|\n| 512 | 51.9 ms | 52.4 ms (≈) |\n| 32,768 | 59.6 ms | 55.2 ms (1.08x faster) |\n| 262,144 | 82.7 ms | 53.4 ms (1.55x faster) |\n| 2,097,152 | 275.1 ms | 98.7 ms (2.79x faster) |\n\n**Parallel (`target_partitions = 8`)** — sorted is consistently slower:\n\n| cardinality | hash | sorted |\n|---|---|---|\n| 512 | 18.5 ms | 24.0 ms (1.30x slower) |\n| 4,096 | 16.9 ms | 29.6 ms (1.76x slower) |\n| 32,768 | 17.9 ms | 32.4 ms (1.81x slower) |\n| 262,144 | 39.8 ms | 59.1 ms (1.48x slower) |\n| 2,097,152 | 49.1 ms | 109.6 ms (2.23x slower) |\n\n\n## Expected behavior\n\nThe planner should compare sorted vs hash aggregation for the partitioned/final stage (accounting for the mandatory post-repartition `SortExec` and estimated group cardinality), rather than always preferring sorted whenever the input happens to be ordered by the group key.",
+    "state": "open",
+    "user": {
+      "login": "niebayes",
+      "name": "niebayes",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/u/25320945?v=4",
+      "id": 25320945
+    },
+    "assignees": null,
+    "labels": null,
+    "milestone": null,
+    "state_reason": null,
+    "comments": 3,
+    "created_at": "2026-07-06T10:32:31Z",
+    "updated_at": "2026-08-13T12:38:52Z",
+    "closed_at": null,
+    "display_url": "https://github.com/apache/datafusion/issues/23338",
+    "display_title": "Perf: Streaming Aggregation should not be chosen unconditionally when the input is sorted"
+  },
+  "comments": [
+    {
+      "url": "https://github.com/apache/datafusion/issues/23338#issuecomment-5052320870",
+      "body": "This sounds ilke a cost model based decision -- I agree the fixed heuristics we have now aren't ideal but I think CBO based decisions suffer from similar challenges\n\nIt would be sweet if there was some sort of API / framework that allowed downstream users to make this type of determiniation on their own (maybe a trait for heuristics / decisions made by the optimizer that people could customize 🤔 )",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 5052320870,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">This sounds ilke a cost model based decision -- I agree the fixed heuristics we have now aren't ideal but I think CBO based decisions suffer from similar challenges</p>\n<p dir=\"auto\">It would be sweet if there was some sort of API / framework that allowed downstream users to make this type of determiniation on their own (maybe a trait for heuristics / decisions made by the optimizer that people could customize 🤔 )</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/23338#issuecomment-5253085653",
+      "body": "We coul also perhaps find some way to improve the performance of the streaming group by operator 🤔 ",
+      "user": {
+        "login": "alamb",
+        "name": "alamb",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/490673?v=4",
+        "id": 490673
+      },
+      "id": 5253085653,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">We coul also perhaps find some way to improve the performance of the streaming group by operator 🤔</p>"
+    },
+    {
+      "url": "https://github.com/apache/datafusion/issues/23338#issuecomment-5280512246",
+      "body": "If this is high priority issue I would investigate and solve it\n\n> I’d reproduce this benchmark and add correctness tests, then prototype a cost-aware choice between streaming and hash aggregation. Do maintainers want me to do this? If so please tag me",
+      "user": {
+        "login": "vukrosic",
+        "name": "vukrosic",
+        "email": null,
+        "avatar_url": "https://avatars.githubusercontent.com/u/74423856?v=4",
+        "id": 74423856
+      },
+      "id": 5280512246,
+      "pull_request_review_id": null,
+      "in_reply_to_id": null,
+      "created_at": null,
+      "updated_at": null,
+      "review": null,
+      "side": null,
+      "line": null,
+      "start_line": null,
+      "path": null,
+      "body_html": "<p dir=\"auto\">If this is high priority issue I would investigate and solve it</p>\n<blockquote>\n<p dir=\"auto\">I’d reproduce this benchmark and add correctness tests, then prototype a cost-aware choice between streaming and hash aggregation. Do maintainers want me to do this? If so please tag me</p>\n</blockquote>"
+    }
+  ]
+}

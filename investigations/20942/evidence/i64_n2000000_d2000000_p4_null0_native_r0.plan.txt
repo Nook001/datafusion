@@ -1,0 +1,10 @@
+Projection: count(DISTINCT t.a0) AS c0, count(DISTINCT t.a1) AS c1, count(DISTINCT t.a2) AS c2
+  Aggregate: groupBy=[[]], aggr=[[count(DISTINCT t.a0), count(DISTINCT t.a1), count(DISTINCT t.a2)]]
+    TableScan: t projection=[a0, a1, a2]
+
+ProjectionExec: expr=[count(DISTINCT t.a0)@0 as c0, count(DISTINCT t.a1)@1 as c1, count(DISTINCT t.a2)@2 as c2], metrics=[output_rows=1, elapsed_compute=3.16µs, output_bytes=24.0 B, output_batches=1, expr_0_eval_time=950ns, expr_1_eval_time=150ns, expr_2_eval_time=40ns]
+  AggregateExec: mode=Final, gby=[], aggr=[count(DISTINCT t.a0), count(DISTINCT t.a1), count(DISTINCT t.a2)], metrics=[output_rows=1, elapsed_compute=119.08ms, output_bytes=24.0 B, output_batches=1, agg_expr_0_arguments_time=6.65µs, agg_expr_0_evaluate_time=500ns, agg_expr_0_merge_time=39.65ms, agg_expr_1_arguments_time=3.42µs, agg_expr_1_evaluate_time=30ns, agg_expr_1_merge_time=39.76ms, agg_expr_2_arguments_time=3.04µs, agg_expr_2_evaluate_time=30ns, agg_expr_2_merge_time=39.64ms, output_rows_skew=0%]
+    CoalescePartitionsExec, metrics=[output_rows=4, elapsed_compute=10.91µs, output_bytes=45.8 MB, output_batches=4]
+      AggregateExec: mode=Partial, gby=[], aggr=[count(DISTINCT t.a0), count(DISTINCT t.a1), count(DISTINCT t.a2)], metrics=[output_rows=4, elapsed_compute=177.96ms, output_bytes=45.8 MB, output_batches=4, agg_expr_0_arguments_time=46.34µs, agg_expr_0_state_time=3.94ms, agg_expr_0_update_time=58.95ms, agg_expr_1_arguments_time=40.43µs, agg_expr_1_state_time=4.20ms, agg_expr_1_update_time=55.20ms, agg_expr_2_arguments_time=43.43µs, agg_expr_2_state_time=4.26ms, agg_expr_2_update_time=51.12ms, output_rows_skew=0%]
+        DataSourceExec: partitions=4, partition_sizes=[62, 62, 62, 62], metrics=[]
+
